@@ -1,0 +1,36 @@
+
+# Local secrets and machine-specific configuration
+.env
+.env.*
+!.env.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+
+# Python environments, caches, coverage, and test artifacts
+.venv/
+venv/
+backend/.venv/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Frontend dependencies and build output
+frontend/node_modules/
+frontend/dist/
+npm-debug.log*
+
+# Generated application output
+generated_reports/
+generated_document_views/
+backups/
+*.dump
+*.archive
+*.sha256
+
+# Editor and operating-system files
+.DS_Store
+.idea/
+*.swp

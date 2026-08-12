@@ -1,0 +1,12 @@
+University Student Data and AI Chatbot Policy
+
+1. The AI chatbot may answer public questions about university programs, admission requirements, tuition fees, and general policies.
+2. Student records are considered personal data and must be protected according to PDPA principles.
+3. PDPA does not prevent all database access. It requires lawful, limited, necessary, and secure access.
+4. Public users cannot access individual student records.
+5. Advisors may access academic information such as student ID, name, program, GPA, academic status, and advisor notes for educational support.
+6. Sensitive fields such as email, phone number, national ID, passport ID, and address must be masked unless the requester is an authorized admin.
+7. Admin users may access full records only for legitimate administrative purposes.
+8. The LLM must not directly query MongoDB or PostgreSQL.
+9. All database requests must go through the MCP Server gateway and predefined tools.
+10. The system should keep audit logs in production.

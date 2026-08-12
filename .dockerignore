@@ -1,0 +1,14 @@
+# Do not send local secrets, runtime data, or build output to Docker.
+.env
+.env.*
+!.env.example
+.git
+**/__pycache__
+**/*.pyc
+frontend/node_modules
+frontend/dist
+backend/.venv
+generated_reports
+generated_document_views
+*.zip
+.DS_Store

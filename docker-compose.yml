@@ -1,0 +1,157 @@
+# A fixed project and volume name keeps database data stable when the source
+# folder is renamed or replaced by a future release.
+name: university_ai
+
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?Set MONGO_ROOT_USERNAME in .env}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?Set MONGO_ROOT_PASSWORD in .env}
+      MONGO_INITDB_DATABASE: ${MONGO_DB:-university_mongo}
+    volumes:
+      - mongo_data:/data/db
+      - ./database/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --username \"$$MONGO_INITDB_ROOT_USERNAME\" --password \"$$MONGO_INITDB_ROOT_PASSWORD\" --authenticationDatabase admin --eval 'db.runCommand({ ping: 1 }).ok' | grep 1"]
+      interval: 20s
+      timeout: 8s
+      retries: 10
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-university_db}
+      POSTGRES_USER: ${POSTGRES_USER:-university_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/postgres-init.sql:/docker-entrypoint-initdb.d/postgres-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+
+  mcp_server:
+    build: ./mcp_server
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      MONGO_URI: ${MONGO_URI:?Set authenticated MONGO_URI in .env}
+      MONGO_DB: ${MONGO_DB:-university_mongo}
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: ${POSTGRES_DB:-university_db}
+      POSTGRES_USER: ${POSTGRES_USER:-university_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_PORT: 5432
+      MCP_INTERNAL_KEY: ${MCP_INTERNAL_KEY:?Set MCP_INTERNAL_KEY in .env}
+    depends_on:
+      mongo:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/health/ready', timeout=3).read()\""]
+      interval: 20s
+      timeout: 6s
+      retries: 10
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+
+  backend:
+    # The seeding and training scripts live at the repository root, so the
+    # backend must build from the repository root rather than ./backend.
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      # Public user-facing URL. The backend itself remains private; Nginx proxies
+      # report and document-view download paths through the frontend service.
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:3100}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3100,http://127.0.0.1:3100}
+      MONGO_URI: ${MONGO_URI:?Set authenticated MONGO_URI in .env}
+      MONGO_DB: ${MONGO_DB:-university_mongo}
+      MCP_SERVER_URL: http://mcp_server:9000
+      MCP_INTERNAL_KEY: ${MCP_INTERNAL_KEY:?Set MCP_INTERNAL_KEY in .env}
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: ${POSTGRES_DB:-university_db}
+      POSTGRES_USER: ${POSTGRES_USER:-university_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_PORT: 5432
+      APP_SECRET_KEY: ${APP_SECRET_KEY:?Set APP_SECRET_KEY in .env}
+      # Administrator accounts are persisted in PostgreSQL. The optional
+      # ADMIN_BOOTSTRAP_* variables from .env are read only when no account exists.
+      AUDIT_LOGGING_ENABLED: ${AUDIT_LOGGING_ENABLED:-true}
+      # Development-only V30 dataset controls. They are blocked by the bootstrap
+      # module whenever APP_ENV=production.
+      DEMO_DATA_MODE: ${DEMO_DATA_MODE:-true}
+      AUTO_SEED_SYNTHETIC_DATA: ${AUTO_SEED_SYNTHETIC_DATA:-true}
+    volumes:
+      - backend_reports:/app/generated_reports
+      - backend_document_views:/app/generated_document_views
+    depends_on:
+      mongo:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      mcp_server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3).read()\""]
+      interval: 20s
+      timeout: 7s
+      retries: 10
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    # Migration runs on every start. In development, the first start verifies
+    # both MongoDB and PostgreSQL contain the same 1,000 synthetic rows.
+    command: >
+      sh -c "python -m app.system_bootstrap --migrate &&
+      if [ "$$AUTO_SEED_SYNTHETIC_DATA" = "true" ]; then
+        python -m app.system_bootstrap --ensure-synthetic;
+      fi &&
+      exec uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: /api
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-3100}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  # These names are deliberately stable across V29.2+ project folders.
+  # Set MONGO_VOLUME_NAME / POSTGRES_VOLUME_NAME in .env only when adopting
+  # an older project volume during a one-time upgrade.
+  mongo_data:
+    name: ${MONGO_VOLUME_NAME:-university_ai_mongo_data}
+  postgres_data:
+    name: ${POSTGRES_VOLUME_NAME:-university_ai_postgres_data}
+  backend_reports:
+    name: ${REPORTS_VOLUME_NAME:-university_ai_reports}
+  backend_document_views:
+    name: ${DOCUMENT_VIEWS_VOLUME_NAME:-university_ai_document_views}

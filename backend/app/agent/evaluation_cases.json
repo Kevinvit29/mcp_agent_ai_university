@@ -1,0 +1,648 @@
+{
+  "version": "V30_AUTHORITATIVE_CHAT_BENCHMARK_1",
+  "description": "Synthetic, deterministic query-understanding cases. These cases never contain or fetch real student data.",
+  "parser_cases": [
+    {
+      "case_id": "total_students_en",
+      "category": "university_count",
+      "parser": "total_student_count",
+      "message": "how many students are in the university",
+      "expected": {"operation": "count", "scope": "university"}
+    },
+    {
+      "case_id": "total_students_en_alt",
+      "category": "university_count",
+      "parser": "total_student_count",
+      "message": "total number of students",
+      "expected": {"operation": "count", "scope": "university"}
+    },
+    {
+      "case_id": "total_students_th",
+      "category": "university_count",
+      "parser": "total_student_count",
+      "message": "มหาวิทยาลัยมีนักศึกษากี่คน",
+      "expected": {"operation": "count", "scope": "university"}
+    },
+    {
+      "case_id": "law_study_count",
+      "category": "study_term_search",
+      "parser": "student_study",
+      "message": "how many students study law",
+      "expected": {"study_term": "law", "intent": "count"}
+    },
+    {
+      "case_id": "law_study_list",
+      "category": "study_term_search",
+      "parser": "student_study",
+      "message": "give me the names of students who study law",
+      "expected": {"study_term": "law", "intent": "list"}
+    },
+    {
+      "case_id": "business_study_count",
+      "category": "study_term_search",
+      "parser": "student_study",
+      "message": "how many students study business",
+      "expected": {"study_term": "business", "intent": "count"}
+    },
+    {
+      "case_id": "business_analytics_study_count",
+      "category": "study_term_search",
+      "parser": "student_study",
+      "message": "how many students study Business Analytics",
+      "expected": {"study_term": "business analytics", "intent": "count"}
+    },
+    {
+      "case_id": "graphic_design_search",
+      "category": "study_term_search",
+      "parser": "student_study",
+      "message": "find students who take graphic design",
+      "expected": {"study_term": "graphic design", "intent": "list"}
+    },
+    {
+      "case_id": "law_rank",
+      "category": "study_term_search",
+      "parser": "student_study",
+      "message": "list the students with the highest grade in law program",
+      "expected": {"study_term": "law", "intent": "rank"}
+    },
+    {
+      "case_id": "law_median",
+      "category": "statistics",
+      "parser": "student_statistic",
+      "message": "what is student median grade in law program",
+      "expected": {"operation": "study_term_aggregate", "statistic": "median", "study_term": "law"}
+    },
+    {
+      "case_id": "law_average",
+      "category": "statistics",
+      "parser": "student_statistic",
+      "message": "average GPA of students who study law",
+      "expected": {"operation": "study_term_aggregate", "statistic": "average", "study_term": "law"}
+    },
+    {
+      "case_id": "law_highest",
+      "category": "statistics",
+      "parser": "student_statistic",
+      "message": "highest GPA in law program",
+      "expected": {"operation": "study_term_aggregate", "statistic": "maximum", "study_term": "law"}
+    },
+    {
+      "case_id": "law_lowest",
+      "category": "statistics",
+      "parser": "student_statistic",
+      "message": "lowest GPA in law program",
+      "expected": {"operation": "study_term_aggregate", "statistic": "minimum", "study_term": "law"}
+    },
+    {
+      "case_id": "population_average",
+      "category": "statistics",
+      "parser": "student_statistic",
+      "message": "average GPA of all students",
+      "expected": {"operation": "student_population_aggregate", "statistic": "average", "study_term": ""}
+    },
+    {
+      "case_id": "population_median",
+      "category": "statistics",
+      "parser": "student_statistic",
+      "message": "median GPA of all students",
+      "expected": {"operation": "student_population_aggregate", "statistic": "median", "study_term": ""}
+    },
+    {
+      "case_id": "gpa_below",
+      "category": "gpa_filter",
+      "parser": "student_metric",
+      "message": "how many students have GPA lower than 3.0",
+      "expected": {"operator": "$lt", "value": 3.0, "intent": "count"}
+    },
+    {
+      "case_id": "gpa_above",
+      "category": "gpa_filter",
+      "parser": "student_metric",
+      "message": "list students with GPA above 3.5",
+      "expected": {"operator": "$gt", "value": 3.5, "intent": "list"}
+    },
+    {
+      "case_id": "gpa_at_most",
+      "category": "gpa_filter",
+      "parser": "student_metric",
+      "message": "students with GPA at most 2.5",
+      "expected": {"operator": "$lte", "value": 2.5, "intent": "list"}
+    },
+    {
+      "case_id": "recommended_subject_rank",
+      "category": "subject_ranking",
+      "parser": "subject_ranking",
+      "message": "rank me top 5 subject that recommended",
+      "expected": {
+        "operation": "subject_summary",
+        "intent": "rank",
+        "answer_style": "subject_rank",
+        "top_n": 5,
+        "ranking_basis": "student_count"
+      }
+    },
+    {
+      "case_id": "student_top_five_natural",
+      "category": "student_ranking",
+      "parser": "student_ranking",
+      "message": "rank me top 5 students that have the best grade",
+      "expected": {"operation": "rank_students", "field": "gpa", "direction": "desc", "top_n": 5}
+    },
+    {
+      "case_id": "student_rank_five_from_gpa",
+      "category": "student_ranking",
+      "parser": "student_ranking",
+      "message": "rank 5 student from gpa",
+      "expected": {"operation": "rank_students", "direction": "desc", "top_n": 5}
+    },
+    {
+      "case_id": "student_leading_five_highest",
+      "category": "student_ranking",
+      "parser": "student_ranking",
+      "message": "5 highest gpa",
+      "expected": {"operation": "rank_students", "direction": "desc", "top_n": 5}
+    },
+    {
+      "case_id": "student_bottom_five",
+      "category": "student_ranking",
+      "parser": "student_ranking",
+      "message": "bottom 5 students by gpa",
+      "expected": {"operation": "rank_students", "direction": "asc", "top_n": 5}
+    },
+    {
+      "case_id": "academic_attendance",
+      "category": "academic_records",
+      "parser": "academic_query",
+      "message": "show S001 attendance",
+      "expected": {"query_type": "student_academic_profile", "answer_style": "attendance", "requested_sections": ["attendance"]}
+    },
+    {
+      "case_id": "academic_finance",
+      "category": "academic_records",
+      "parser": "academic_query",
+      "message": "show S001 tuition balance",
+      "expected": {"query_type": "student_academic_profile", "answer_style": "finance", "requested_sections": ["financial_accounts"]}
+    },
+    {
+      "case_id": "academic_scholarship",
+      "category": "academic_records",
+      "parser": "academic_query",
+      "message": "show S001 scholarship",
+      "expected": {"query_type": "student_academic_profile", "answer_style": "scholarship", "requested_sections": ["scholarship_awards"]}
+    },
+    {
+      "case_id": "academic_course_catalog",
+      "category": "academic_records",
+      "parser": "academic_query",
+      "message": "show course catalog",
+      "expected": {"domain": "course_catalog", "query_type": "course_catalog", "answer_style": "course_catalog"}
+    },
+    {
+      "case_id": "academic_attendance_th",
+      "category": "academic_records",
+      "parser": "academic_query",
+      "message": "ดูการเข้าเรียนของ S001",
+      "expected": {"query_type": "student_academic_profile", "answer_style": "attendance"}
+    },
+    {
+      "case_id": "academic_assessment",
+      "category": "academic_records",
+      "parser": "academic_query",
+      "message": "show S001 midterm score",
+      "expected": {"query_type": "student_academic_profile", "answer_style": "assessments", "requested_sections": ["assessments"]}
+    },
+    {
+      "case_id": "analytics_screenshot_course_grade",
+      "category": "database_analytics",
+      "parser": "database_analytics",
+      "message": "which subject have the greatest summary grade",
+      "expected": {"source": "postgres", "operation": "group_rank", "dimension": "course", "measure": "average_score", "top_n": 1}
+    },
+    {
+      "case_id": "analytics_average_gpa_program",
+      "category": "database_analytics",
+      "parser": "database_analytics",
+      "message": "average GPA by program",
+      "expected": {"source": "mongo", "operation": "group_aggregate", "dimension": "program", "measure": "average_gpa"}
+    },
+    {
+      "case_id": "analytics_count_per_major",
+      "category": "database_analytics",
+      "parser": "database_analytics",
+      "message": "count students per major",
+      "expected": {"source": "mongo", "dimension": "program", "measure": "student_count"}
+    },
+    {
+      "case_id": "analytics_population_paraphrase",
+      "category": "database_analytics",
+      "parser": "database_analytics",
+      "message": "how large is the student body",
+      "expected": {"type": "student_count", "operation": "count", "scope": "university"}
+    },
+    {
+      "case_id": "analytics_performer_paraphrase",
+      "category": "database_analytics",
+      "parser": "database_analytics",
+      "message": "show the ten best academic performers",
+      "expected": {"type": "student_ranking", "operation": "rank_students", "top_n": 10}
+    },
+    {
+      "case_id": "analytics_rank_with_attendance",
+      "category": "database_analytics",
+      "parser": "database_analytics",
+      "message": "rank top 5 students with attendance",
+      "expected": {"type": "rank_with_academic", "operation": "rank_students", "top_n": 5, "requested_academic_sections": ["attendance"]}
+    },
+    {
+      "case_id": "analytics_prediction_limitation",
+      "category": "capability_boundary",
+      "parser": "database_analytics",
+      "message": "predict which students will fail next term",
+      "expected": {"type": "capability_limitation", "reason": "unsupported_prediction"}
+    },
+    {
+      "case_id": "analytics_prerequisite_limitation",
+      "category": "capability_boundary",
+      "parser": "database_analytics",
+      "message": "what course should S001 take next",
+      "expected": {"type": "capability_limitation", "reason": "unsupported_prerequisites"}
+    }
+  ],
+  "contract_cases": [
+    {
+      "case_id": "student_profile_contract",
+      "message": "what is S095 profile",
+      "expected": {"student_ids": ["S095"], "answer_style": "profile", "must_use_latest_entities": true}
+    },
+    {
+      "case_id": "student_grade_contract",
+      "message": "S035 grade",
+      "expected": {"student_ids": ["S035"], "answer_style": "grades", "must_use_latest_entities": true}
+    },
+    {
+      "case_id": "student_gpa_contract",
+      "message": "S002 GPA",
+      "expected": {"student_ids": ["S002"], "answer_style": "gpa", "must_use_latest_entities": true}
+    },
+    {
+      "case_id": "student_gpa_grades_multi_contract",
+      "message": "What is my GPA and grades?",
+      "expected": {"domain": "students", "answer_style": "student_multi"}
+    },
+    {
+      "case_id": "academic_grades_attendance_multi_contract",
+      "message": "show grades and attendance for S001",
+      "expected": {"domain": "academic_records", "answer_style": "academic_multi"}
+    },
+    {
+      "case_id": "surname_gpa_contract",
+      "message": "gpa of aksornchai",
+      "expected": {"last_names": ["aksornchai"], "answer_style": "gpa", "must_use_latest_entities": true}
+    },
+    {
+      "case_id": "table_records_contract",
+      "message": "list students as a table",
+      "expected": {"domain": "students", "is_schema_request": false}
+    },
+    {
+      "case_id": "table_schema_contract",
+      "message": "show columns in the student table",
+      "expected": {"domain": "database_map", "is_schema_request": true}
+    },
+    {
+      "case_id": "unsupported_realtime_contract",
+      "message": "what is the Boonmee family doing right now",
+      "expected": {"domain": "clarify", "is_realtime_request": true}
+    }
+  ],
+  "planner_cases": [
+    {
+      "case_id": "v30_student_top_five_exact",
+      "category": "authoritative_planner",
+      "message": "rank me top 5 students that have the best grade",
+      "expected": {
+        "tool_name": "mongodb_student_tool",
+        "arguments.operation": "rank_students",
+        "arguments.answer_style": "student_rank",
+        "arguments.top_n": 5,
+        "arguments.limit": 5
+      }
+    },
+    {
+      "case_id": "v30_student_bottom_five_exact",
+      "category": "authoritative_planner",
+      "message": "bottom 5 students by gpa",
+      "expected": {
+        "tool_name": "mongodb_student_tool",
+        "arguments.operation": "rank_students",
+        "arguments.answer_style": "student_rank",
+        "arguments.top_n": 5,
+        "arguments.sort": [{"field": "gpa", "direction": "asc"}]
+      }
+    },
+    {
+      "case_id": "v30_academic_grades_attendance_multi",
+      "category": "authoritative_planner",
+      "message": "show grades and attendance for S001",
+      "expected": {
+        "tool_name": "postgres_university_tool",
+        "arguments.query_type": "student_academic_profile",
+        "arguments.answer_style": "academic_multi",
+        "arguments.requested_sections": ["attendance"],
+        "arguments.student_master_sections": ["grades"]
+      }
+    },
+    {
+      "case_id": "v30_surname_gpa_filtered",
+      "category": "authoritative_planner",
+      "message": "gpa of boonmee",
+      "expected": {
+        "tool_name": "mongodb_student_tool",
+        "arguments.operation": "read_students",
+        "arguments.requested_last_names": ["boonmee"],
+        "arguments.answer_style": "gpa"
+      }
+    },
+    {
+      "case_id": "v30_student_table_records",
+      "category": "authoritative_planner",
+      "message": "list students as a table",
+      "expected": {
+        "tool_name": "mongodb_student_tool",
+        "arguments.operation": "read_students",
+        "arguments.presentation.view": "table"
+      }
+    },
+    {
+      "case_id": "v30_student_table_schema",
+      "category": "authoritative_planner",
+      "message": "show columns in the student table",
+      "expected": {
+        "tool_name": "postgres_university_tool",
+        "arguments.query_type": "database_map",
+        "arguments.operation": "schema"
+      }
+    },
+    {
+      "case_id": "v30_unsupported_realtime",
+      "category": "authoritative_planner",
+      "message": "what is the Boonmee family doing right now",
+      "expected": {
+        "tool_name": "none",
+        "arguments.reason": "unsupported_realtime"
+      }
+    },
+    {
+      "case_id": "v30_academic_attendance",
+      "category": "authoritative_planner",
+      "message": "show S001 attendance",
+      "expected": {
+        "tool_name": "postgres_university_tool",
+        "arguments.query_type": "student_academic_profile",
+        "arguments.student_id": "S001",
+        "arguments.answer_style": "attendance",
+        "arguments.requested_sections": ["attendance"]
+      }
+    },
+    {
+      "case_id": "v30_academic_finance",
+      "category": "authoritative_planner",
+      "message": "show S001 tuition balance",
+      "expected": {
+        "tool_name": "postgres_university_tool",
+        "arguments.query_type": "student_academic_profile",
+        "arguments.answer_style": "finance",
+        "arguments.requested_sections": ["financial_accounts"]
+      }
+    },
+    {
+      "case_id": "v30_course_catalog",
+      "category": "authoritative_planner",
+      "message": "show course catalog",
+      "expected": {
+        "tool_name": "postgres_university_tool",
+        "arguments.query_type": "course_catalog",
+        "arguments.answer_style": "course_catalog"
+      }
+    },
+    {
+      "case_id": "v30_academic_assessment",
+      "category": "authoritative_planner",
+      "message": "show S001 midterm score",
+      "expected": {
+        "tool_name": "postgres_university_tool",
+        "arguments.query_type": "student_academic_profile",
+        "arguments.answer_style": "assessments",
+        "arguments.requested_sections": ["assessments"]
+      }
+    },
+    {
+      "case_id": "v30_course_grade_analytics",
+      "category": "authoritative_planner",
+      "message": "which course has the highest average grade",
+      "expected": {
+        "tool_name": "postgres_university_tool",
+        "arguments.query_type": "academic_analytics",
+        "arguments.operation": "group_rank",
+        "arguments.dimension": "course",
+        "arguments.measure": "average_score",
+        "arguments.top_n": 1
+      }
+    },
+    {
+      "case_id": "v30_program_gpa_analytics",
+      "category": "authoritative_planner",
+      "message": "average GPA by program",
+      "expected": {
+        "tool_name": "mongodb_student_tool",
+        "arguments.operation": "group_students",
+        "arguments.dimension": "program",
+        "arguments.measure": "average_gpa"
+      }
+    },
+    {
+      "case_id": "v30_multi_student_academic",
+      "category": "authoritative_planner",
+      "message": "compare S001 and S002 GPA and attendance",
+      "expected": {
+        "tool_name": "postgres_university_tool",
+        "arguments.query_type": "student_academic_profile",
+        "arguments.student_ids": ["S001", "S002"],
+        "arguments.requested_sections": ["attendance"]
+      }
+    },
+    {
+      "case_id": "v30_rank_with_attendance",
+      "category": "authoritative_planner",
+      "message": "rank top 5 students with attendance",
+      "expected": {
+        "tool_name": "mongodb_student_tool",
+        "arguments.operation": "rank_students",
+        "arguments.top_n": 5,
+        "arguments.requested_academic_sections": ["attendance"]
+      }
+    },
+    {
+      "case_id": "v30_prediction_safe_boundary",
+      "category": "authoritative_planner",
+      "message": "predict which students will fail next term",
+      "expected": {
+        "tool_name": "none",
+        "arguments.reason": "unsupported_prediction",
+        "arguments.answer_style": "capability_limitation"
+      }
+    },
+    {
+      "case_id": "v30_document_compare_collection",
+      "category": "authoritative_planner",
+      "message": "compare all uploaded PDFs",
+      "expected": {
+        "tool_name": "postgres_university_tool",
+        "arguments.operation": "document_search",
+        "arguments.answer_style": "document_compare"
+      }
+    },
+    {
+      "case_id": "v30_advisor_class_count_paraphrase",
+      "category": "advisor_classroom_planner",
+      "role": "advisor",
+      "requester_advisor_id": "A001",
+      "message": "how many student are there learn business english",
+      "expected": {
+        "tool_name": "postgres_university_tool",
+        "arguments.query_type": "advisor_classroom",
+        "arguments.operation": "class_count",
+        "arguments.course_query": "business english",
+        "arguments.answer_style": "advisor_class_count"
+      }
+    },
+    {
+      "case_id": "v30_advisor_class_roster",
+      "category": "advisor_classroom_planner",
+      "role": "advisor",
+      "requester_advisor_id": "A001",
+      "message": "who studies Business English in my class",
+      "expected": {
+        "tool_name": "postgres_university_tool",
+        "arguments.query_type": "advisor_classroom",
+        "arguments.operation": "class_roster",
+        "arguments.answer_style": "advisor_class_roster"
+      }
+    },
+    {
+      "case_id": "v30_advisor_same_class_grade",
+      "category": "advisor_classroom_planner",
+      "role": "advisor",
+      "requester_advisor_id": "A001",
+      "message": "show S001 grade",
+      "expected": {
+        "tool_name": "postgres_university_tool",
+        "arguments.query_type": "advisor_classroom",
+        "arguments.operation": "class_records",
+        "arguments.student_ids": ["S001"],
+        "arguments.requested_metrics": ["grade"]
+      }
+    },
+    {
+      "case_id": "v30_advisor_gpa_denied",
+      "category": "advisor_classroom_planner",
+      "role": "advisor",
+      "requester_advisor_id": "A001",
+      "message": "show S001 GPA",
+      "expected": {
+        "tool_name": "none",
+        "arguments.reason": "advisor_classroom_scope_only",
+        "arguments.answer_style": "advisor_scope"
+      }
+    },
+    {
+      "case_id": "v30_advisor_own_class_attendance_summary",
+      "category": "advisor_classroom_planner",
+      "role": "advisor",
+      "requester_advisor_id": "A001",
+      "message": "what is the average attendance of students I teach",
+      "expected": {
+        "tool_name": "postgres_university_tool",
+        "arguments.query_type": "advisor_classroom",
+        "arguments.operation": "class_summary",
+        "arguments.requested_metrics": ["attendance"]
+      }
+    },
+    {
+      "case_id": "v30_student_own_profile_allowed",
+      "category": "student_own_scope_planner",
+      "role": "student",
+      "requester_student_id": "S001",
+      "message": "show my profile",
+      "expected": {
+        "tool_name": "mongodb_student_tool",
+        "arguments.operation": "read_students",
+        "arguments.student_id": "S001"
+      }
+    },
+    {
+      "case_id": "v30_student_other_profile_denied",
+      "category": "student_own_scope_planner",
+      "role": "student",
+      "requester_student_id": "S001",
+      "message": "show S002 profile",
+      "expected": {
+        "tool_name": "none",
+        "arguments.reason": "student_other_record_denied",
+        "arguments.answer_style": "student_scope"
+      }
+    },
+    {
+      "case_id": "v30_student_population_count_denied",
+      "category": "student_own_scope_planner",
+      "role": "student",
+      "requester_student_id": "S001",
+      "message": "how many students are in the university",
+      "expected": {
+        "tool_name": "none",
+        "arguments.reason": "student_own_scope_only",
+        "arguments.answer_style": "student_scope"
+      }
+    },
+    {
+      "case_id": "v30_student_population_benchmark_denied",
+      "category": "student_own_scope_planner",
+      "role": "student",
+      "requester_student_id": "S001",
+      "message": "compare my GPA against the university average",
+      "expected": {
+        "tool_name": "none",
+        "arguments.reason": "student_own_scope_only",
+        "arguments.answer_style": "student_scope"
+      }
+    },
+    {
+      "case_id": "v30_student_own_course_analytics_allowed",
+      "category": "student_own_scope_planner",
+      "role": "student",
+      "requester_student_id": "S001",
+      "message": "which of my subjects has the best grade",
+      "expected": {
+        "tool_name": "postgres_university_tool",
+        "arguments.query_type": "academic_analytics",
+        "arguments.dimension": "course",
+        "arguments.measure": "average_score"
+      }
+    },
+    {
+      "case_id": "v30_student_own_course_membership",
+      "category": "student_own_scope_planner",
+      "role": "student",
+      "requester_student_id": "S001",
+      "message": "do I study Business English?",
+      "expected": {
+        "tool_name": "postgres_university_tool",
+        "arguments.student_id": "S001",
+        "arguments.query_type": "student_subjects",
+        "arguments.operation": "course_membership",
+        "arguments.course_query": "Business English",
+        "arguments.answer_style": "student_course_membership"
+      }
+    }
+  ]
+}
