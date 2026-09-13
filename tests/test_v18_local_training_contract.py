@@ -23,7 +23,9 @@ def test_auto_training_controller_exists():
     assert "incremental" in code.lower()
 
 
-def test_frontend_uses_local_training_endpoint():
-    code = (ROOT / "frontend" / "src" / "App.jsx").read_text()
-    assert "/ai/training/run-local" in code
-    assert "Train with Gemini embeddings" not in code
+def test_local_training_endpoint_is_backend_only():
+    frontend = (ROOT / "frontend" / "src" / "App.jsx").read_text()
+    backend = (ROOT / "backend" / "app" / "main.py").read_text()
+    assert "/ai/training/run-local" in backend
+    assert "/ai/training/run-local" not in frontend
+    assert "Train with Gemini embeddings" not in frontend

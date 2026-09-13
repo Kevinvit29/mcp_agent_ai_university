@@ -73,7 +73,12 @@ def parse_capability_limitation(message: str) -> Optional[Dict[str, Any]]:
             "available_alternative": "term-level course scores and attendance plus the current GPA",
         }
 
-    if any(term in text for term in ("predict", "forecast", "will fail", "future failure", "future gpa", "next semester risk")):
+    future_academic_value = (
+        any(term in text for term in ("gpa", "grade", "score", "risk", "เกรด", "คะแนน"))
+        and any(term in text for term in ("next semester", "next term", "future", "ภาคเรียนหน้า", "เทอมหน้า"))
+        and any(term in text for term in ("what will", "will be", "predict", "forecast", "จะได้", "จะเป็น"))
+    )
+    if future_academic_value or any(term in text for term in ("predict", "forecast", "will fail", "future failure", "future gpa", "next semester risk")):
         return {
             "type": "capability_limitation",
             "reason": "unsupported_prediction",
@@ -261,7 +266,16 @@ def parse_database_analytics_query(message: str) -> Optional[Dict[str, Any]]:
         }
 
     dimension: Optional[str] = None
-    if re.search(r"\b(?:by|per|each|every|across)\s+(?:program|programs|major|majors)\b", text) or "แต่ละสาขา" in text:
+    if (
+        re.search(r"\b(?:by|per|each|every|across)\s+(?:program|programs|major|majors)\b", text)
+        or "แต่ละสาขา" in text
+        or (
+            has_rank
+            and not any(term in text for term in student_population_words)
+            and re.search(r"\b(?:program|programs|major|majors)\b", text)
+            and any(term in text for term in ("gpa", "grade", "score", "attendance", "count", "number"))
+        )
+    ):
         dimension = "program"
     elif re.search(r"\b(?:by|per|each|every|across)\s+(?:year|year level|cohort)\b", text) or "แต่ละชั้นปี" in text:
         dimension = "year_level"

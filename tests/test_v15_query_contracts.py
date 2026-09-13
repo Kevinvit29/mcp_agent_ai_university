@@ -6,10 +6,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app.agent.aggregate_query import (
+    parse_student_metric_query,
     parse_total_student_count_query,
     parse_student_statistic_query,
     parse_student_study_query,
 )
+from app.agent.tool_planner import deterministic_plan
 
 
 class V15QueryContractTests(unittest.TestCase):
@@ -40,6 +42,43 @@ class V15QueryContractTests(unittest.TestCase):
         self.assertIsNotNone(query)
         self.assertEqual(query["study_term"].lower(), "law")
         self.assertEqual(query["intent"], "count")
+
+    def test_exact_gpa_phrasings_use_equality_filter_not_total_count(self):
+        messages = [
+            "how many student get gpa 4.00",
+            "how many students have GPA 4.0",
+            "how many students have GPA exactly 4",
+            "number of students whose GPA is 4.00",
+            "count learners with 4 GPA",
+            "list students with GPA of 3.50",
+        ]
+        for message in messages:
+            with self.subTest(message=message):
+                query = parse_student_metric_query(message)
+                self.assertIsNotNone(query)
+                self.assertEqual(query["operator"], "$eq")
+                self.assertIsNone(parse_total_student_count_query(message))
+
+                plan = deterministic_plan(message, "en", "admin")
+                self.assertEqual(plan["arguments"]["operation"], "filter_summary")
+                self.assertEqual(
+                    plan["arguments"]["query_filter"],
+                    {"gpa": {"$eq": query["value"]}},
+                )
+
+    def test_inequality_gpa_phrasings_keep_their_original_operator(self):
+        cases = {
+            "how many students have GPA below 3": "$lt",
+            "students with GPA at least 3.5": "$gte",
+            "count students with GPA over 3.8": "$gt",
+            "students with GPA at most 2.5": "$lte",
+        }
+        for message, operator in cases.items():
+            with self.subTest(message=message):
+                query = parse_student_metric_query(message)
+                self.assertIsNotNone(query)
+                self.assertEqual(query["operator"], operator)
+                self.assertIsNone(parse_total_student_count_query(message))
 
 
 if __name__ == "__main__":
@@ -81,6 +120,37 @@ class V15PlannerValidationTests(unittest.TestCase):
         validation = validate_tool_result("how many student in the university", bad_plan, result)
         self.assertFalse(validation["is_valid"])
         self.assertTrue(any("University-wide student count" in problem for problem in validation["problems"]))
+
+    def test_validator_requires_exact_gpa_filter_in_plan_and_result(self):
+        message = "how many student get gpa 4.00"
+        bad_plan = {
+            "tool_name": "mongodb_student_tool",
+            "purpose_analysis": self._purpose(),
+            "arguments": {"operation": "count", "query_filter": {}},
+            "validation_contract": {"expected_domain": "students"},
+        }
+        bad_result = {
+            "success": True,
+            "data": {"type": "student_count", "count": 1000, "query_filter": {}},
+        }
+        rejected = validate_tool_result(message, bad_plan, bad_result)
+        self.assertFalse(rejected["is_valid"])
+        self.assertTrue(any("GPA comparison" in problem for problem in rejected["problems"]))
+
+        metric = parse_student_metric_query(message)
+        good_plan = deterministic_plan(message, "en", "admin")
+        good_result = {
+            "success": True,
+            "data": {
+                "type": "student_filter_summary",
+                "count": 7,
+                "query_filter": metric["query_filter"],
+                "metric_query": metric,
+                "students": [],
+            },
+        }
+        accepted = validate_tool_result(message, good_plan, good_result)
+        self.assertTrue(accepted["is_valid"], accepted["problems"])
 
 
 if __name__ == "__main__":

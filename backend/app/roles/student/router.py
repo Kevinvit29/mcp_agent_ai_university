@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.dependencies import require_identity
 from app.roles.student import repository as student_data
@@ -26,9 +26,9 @@ def documents(request: Request):
 
 
 @router.get("/documents/{document_id}")
-def document_detail(document_id: int, request: Request):
+def document_detail(document_id: int, request: Request, document_scope: str = Query("advisor")):
     identity = require_identity(request, "student")
-    doc = student_data.get_student_accessible_document(document_id, identity.student_id)
+    doc = student_data.get_student_accessible_document(document_id, identity.student_id, document_scope)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found or not accessible for this student's enrolled subjects.")
     return {"success": True, "document": doc}

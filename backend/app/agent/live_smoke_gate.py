@@ -104,7 +104,7 @@ def _postgres_snapshot(connection_factory: Callable[[], Any] = get_connection) -
             # All names below are internal constants, never request parameters.
             # A missing table should be reported as missing, not turn the entire
             # PostgreSQL probe into an opaque SQL exception.
-            for table_name in ("admin_documents", "advisor_documents", "student_subjects", "ai_data_agents", "ai_data_chunks"):
+            for table_name in ("admin_documents", "advisor_documents", "lecturer_documents", "student_subjects", "ai_data_agents", "ai_data_chunks"):
                 if table_name not in present:
                     counts[table_name] = None
                     continue

@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 from app.agent.tool_planner import deterministic_plan
 from app.agent.natural_query import normalize_typos
 from app.agent.aggregate_query import (
+    parse_student_metric_query,
     parse_student_ranking_query,
     parse_student_study_query,
     parse_student_statistic_query,
@@ -298,16 +299,52 @@ def validate_tool_result(message: str, plan: Dict[str, Any], tool_result: Dict[s
         if not signed_advisor or str(data.get("advisor_id") or "").upper() != signed_advisor:
             ok = False
             problems.append("Advisor classroom result is not bound to the signed advisor identity.")
-        if data.get("scope") not in {None, "signed_advisor_same_course_only"}:
+        if data.get("scope") not in {None, "signed_advisor_same_course_only", "signed_lecturer_same_course_only"}:
             ok = False
-            problems.append("Advisor classroom result has an invalid access scope.")
+            problems.append("Classroom result has an invalid signed teaching scope.")
 
     total_count_query = parse_total_student_count_query(message)
+    metric_query = parse_student_metric_query(message)
     ranking_query = parse_student_ranking_query(message)
     stat_query = parse_student_statistic_query(message)
     plan_args = plan.get("arguments") or {}
 
-    if ranking_query and exp == "students":
+    if metric_query and exp == "students":
+        expected_filter = metric_query.get("query_filter") or {}
+        expected_metric = {
+            "field": metric_query.get("field"),
+            "operator": metric_query.get("operator"),
+            "value": metric_query.get("value"),
+        }
+        if plan_args.get("operation") != "filter_summary":
+            ok = False
+            problems.append(
+                "Student GPA comparison must use operation=filter_summary, "
+                f"not {plan_args.get('operation') or 'empty'}."
+            )
+        if plan_args.get("query_filter") != expected_filter:
+            ok = False
+            problems.append("Student GPA comparison plan does not contain the exact requested database filter.")
+        if not isinstance(data, dict) or data.get("type") != "student_filter_summary":
+            ok = False
+            problems.append("Student GPA comparison must return a student_filter_summary payload.")
+        elif data.get("query_filter") != expected_filter:
+            ok = False
+            problems.append("Student GPA comparison result was calculated with the wrong database filter.")
+        else:
+            actual_metric = data.get("metric_query") if isinstance(data.get("metric_query"), dict) else {}
+            if any(actual_metric.get(key) != value for key, value in expected_metric.items()):
+                ok = False
+                problems.append("Student GPA comparison result does not match the requested field, operator, and value.")
+
+    if (
+        ranking_query
+        and exp == "students"
+        and not (
+            isinstance(analytics_query, dict)
+            and analytics_query.get("type") == "database_analytics"
+        )
+    ):
         if plan_args.get("operation") != "rank_students":
             ok = False
             problems.append(f"Student ranking must use operation=rank_students, not {plan_args.get('operation') or 'empty'}.")

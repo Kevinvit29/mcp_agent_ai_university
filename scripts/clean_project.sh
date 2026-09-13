@@ -1,16 +1,12 @@
 #!/usr/bin/env bash
+# Safe generated-cache cleanup only. This script never stops containers,
+# removes Docker resources, touches database volumes, or deletes dependencies.
 set -euo pipefail
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
 
-printf "Stopping old containers for this compose project...\n"
-docker compose down --remove-orphans || true
+find backend mcp_server scripts tests -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
+find backend mcp_server scripts tests -depth -type d -name '__pycache__' -empty -delete
+find . -maxdepth 3 -type f -name '.DS_Store' -delete
 
-printf "Removing Python cache files...\n"
-find . -type d -name __pycache__ -prune -exec rm -rf {} + || true
-find . -type f -name '*.pyc' -delete || true
-find . -type f -name '.DS_Store' -delete || true
-
-printf "Optional Docker cleanup: removing unused images/containers/networks, not volumes...\n"
-docker system prune -f || true
-
-printf "Done. Database volumes were NOT deleted.\n"
-printf "To rebuild: docker compose build --no-cache && docker compose up\n"
+printf 'Generated Python/macOS cache files removed. Services and data were not changed.\n'

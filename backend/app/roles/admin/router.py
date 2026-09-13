@@ -10,6 +10,8 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
 from app.dependencies import require_identity
 from app.roles.admin import repository as admin_data
+from app.roles.admin import master_import_repository, master_import_service, master_record_service
+from app.roles.admin.master_import_models import ImportValidationError
 from app.reports.document_pdf_viewer import create_document_table_pdf
 
 
@@ -32,6 +34,157 @@ def create_admin_router(process_knowledge_file: KnowledgeProcessor) -> APIRouter
         require_identity(request, "admin")
         from app.system_bootstrap import dataset_status as read_dataset_status
         return read_dataset_status()
+
+    @router.post("/master-data/imports/preview")
+    async def preview_student_master_import(
+        request: Request,
+        file: UploadFile = File(...),
+        mapping: str = Form("{}"),
+    ):
+        """Parse and stage a CSV/Excel student file without changing live data."""
+        identity = require_identity(request, "admin")
+        try:
+            requested_mapping = json.loads(mapping or "{}")
+            if not isinstance(requested_mapping, dict):
+                raise ValueError("mapping must be a JSON object")
+            batch = master_import_service.create_preview(
+                raw=await file.read(),
+                filename=file.filename or "student-master.csv",
+                actor_admin_id=identity.subject_id,
+                mapping=requested_mapping,
+            )
+        except (ImportValidationError, ValueError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return {
+            "success": True,
+            "detail": "Preview created. Live student records have not been changed.",
+            "batch": batch,
+        }
+
+    @router.get("/master-data/imports")
+    def student_master_imports(request: Request, limit: int = 50):
+        require_identity(request, "admin")
+        return {"success": True, "imports": master_import_repository.list_batches(limit)}
+
+    @router.get("/master-data/imports/{import_id}")
+    def student_master_import_detail(import_id: str, request: Request):
+        require_identity(request, "admin")
+        batch = master_import_repository.get_batch(import_id)
+        if not batch:
+            raise HTTPException(status_code=404, detail="Import batch was not found.")
+        return {"success": True, "batch": batch}
+
+    @router.post("/master-data/imports/{import_id}/confirm")
+    def confirm_student_master_import(import_id: str, payload: dict, request: Request):
+        identity = require_identity(request, "admin")
+        try:
+            return master_import_service.confirm_import(
+                import_id,
+                actor_admin_id=identity.subject_id,
+                confirmed=payload.get("confirm") is True,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc).strip("'"))
+        except master_import_service.ImportStateError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+
+    @router.get("/master-data/imports/{import_id}/verification")
+    def verify_student_master_import(import_id: str, request: Request):
+        require_identity(request, "admin")
+        if not master_import_repository.get_batch(import_id, preview_limit=1):
+            raise HTTPException(status_code=404, detail="Import batch was not found.")
+        return master_import_service.verify_import(import_id)
+
+    @router.post("/master-data/imports/{import_id}/rollback")
+    def rollback_student_master_import(import_id: str, payload: dict, request: Request):
+        identity = require_identity(request, "admin")
+        try:
+            return master_import_service.rollback_import(
+                import_id,
+                actor_admin_id=identity.subject_id,
+                confirmed=payload.get("confirm") is True,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc).strip("'"))
+        except master_import_service.ImportStateError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+
+    @router.get("/master-data/students")
+    def managed_students(request: Request, limit: int = 100):
+        require_identity(request, "admin")
+        return {"success": True, "students": master_record_service.list_students(limit)}
+
+    @router.post("/master-data/students")
+    def add_student(payload: dict, request: Request):
+        identity = require_identity(request, "admin")
+        try:
+            return master_record_service.save_student(
+                payload=payload, actor_admin_id=identity.subject_id, create=True,
+                confirmed=payload.get("confirm") is True,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @router.patch("/master-data/students/{student_id}")
+    def edit_student(student_id: str, payload: dict, request: Request):
+        identity = require_identity(request, "admin")
+        try:
+            return master_record_service.save_student(
+                payload=payload, target_student_id=student_id, actor_admin_id=identity.subject_id,
+                create=False, confirmed=payload.get("confirm") is True,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @router.post("/master-data/students/{student_id}/active")
+    def change_student_active(student_id: str, payload: dict, request: Request):
+        require_identity(request, "admin")
+        if not isinstance(payload.get("is_active"), bool):
+            raise HTTPException(status_code=400, detail="is_active must be true or false.")
+        try:
+            student = master_record_service.set_student_active(student_id, payload["is_active"])
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        return {"success": True, "student": student}
+
+    @router.get("/master-data/advisors")
+    def managed_advisors(request: Request, limit: int = 100):
+        require_identity(request, "admin")
+        return {"success": True, "advisors": master_record_service.list_advisors(limit)}
+
+    @router.post("/master-data/advisors")
+    def add_advisor(payload: dict, request: Request):
+        require_identity(request, "admin")
+        try:
+            advisor = master_record_service.save_advisor(
+                payload=payload, create=True, confirmed=payload.get("confirm") is True,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return {"success": True, "advisor": advisor}
+
+    @router.patch("/master-data/advisors/{advisor_id}")
+    def edit_advisor(advisor_id: str, payload: dict, request: Request):
+        require_identity(request, "admin")
+        try:
+            advisor = master_record_service.save_advisor(
+                payload=payload, target_advisor_id=advisor_id, create=False,
+                confirmed=payload.get("confirm") is True,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return {"success": True, "advisor": advisor}
+
+    @router.post("/master-data/advisors/{advisor_id}/active")
+    def change_advisor_active(advisor_id: str, payload: dict, request: Request):
+        require_identity(request, "admin")
+        if not isinstance(payload.get("is_active"), bool):
+            raise HTTPException(status_code=400, detail="is_active must be true or false.")
+        try:
+            advisor = master_record_service.set_advisor_active(advisor_id, payload["is_active"])
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        return {"success": True, "advisor": advisor}
 
     @router.post("/account/change-password")
     def account_change_password(payload: dict, request: Request):
@@ -80,6 +233,32 @@ def create_admin_router(process_knowledge_file: KnowledgeProcessor) -> APIRouter
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         return {"success": True, "account": account}
+
+    @router.patch("/accounts/{admin_id}")
+    def account_update(admin_id: str, payload: dict, request: Request):
+        require_identity(request, "admin")
+        try:
+            account = admin_data.update_admin_account(
+                target_admin_id=admin_id,
+                username=str(payload.get("username") or ""),
+                display_name=str(payload.get("display_name") or ""),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return {"success": True, "account": account}
+
+    @router.post("/accounts/{admin_id}/reset-password")
+    def account_reset_password(admin_id: str, payload: dict, request: Request):
+        identity = require_identity(request, "admin")
+        try:
+            account = admin_data.reset_admin_password_by_id(
+                target_admin_id=admin_id,
+                new_password=str(payload.get("new_password") or ""),
+                actor_admin_id=identity.subject_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return {"success": True, "detail": "Administrator password reset securely.", "account": account}
 
     @router.post("/documents/upload")
     async def upload_document(

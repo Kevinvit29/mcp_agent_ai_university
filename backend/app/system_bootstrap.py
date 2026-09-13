@@ -12,6 +12,7 @@ production mode or unrecognised existing records suggest this is not a demo DB.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -53,6 +54,8 @@ def _postgres_status() -> Dict[str, Any]:
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) AS count FROM student_profiles")
             students = int((cur.fetchone() or {}).get("count") or 0)
+            cur.execute("SELECT student_id FROM student_profiles ORDER BY student_id")
+            student_ids = [str(row["student_id"]) for row in cur.fetchall()]
             cur.execute(
                 """
                 SELECT data_origin, student_count, advisor_count, course_count,
@@ -73,6 +76,7 @@ def _postgres_status() -> Dict[str, Any]:
             return {
                 "reachable": True,
                 "student_profiles": students,
+                "student_id_fingerprint": hashlib.sha256("|".join(student_ids).encode("utf-8")).hexdigest(),
                 "v30_synthetic_students": v30_students,
                 "admin_accounts": admins,
                 "metadata": metadata,
@@ -90,11 +94,13 @@ def _mongo_status() -> Dict[str, Any]:
     try:
         db = client[db_name]
         students = db.students.count_documents({})
+        student_ids = sorted(str(row["student_id"]) for row in db.students.find({}, {"_id": 0, "student_id": 1}))
         v30_students = db.students.count_documents({"data_origin": DATA_ORIGIN})
         metadata = db.system_metadata.find_one({"key": "synthetic_dataset_v30"}, {"_id": 0})
         return {
             "reachable": True,
             "students": int(students),
+            "student_id_fingerprint": hashlib.sha256("|".join(student_ids).encode("utf-8")).hexdigest(),
             "v30_synthetic_students": int(v30_students),
             "metadata": metadata,
         }
@@ -107,24 +113,33 @@ def dataset_status() -> Dict[str, Any]:
     pg = _postgres_status()
     mongo = _mongo_status()
     expected = EXPECTED_STUDENT_COUNT
-    synchronized = (
-        pg["student_profiles"] == expected
-        and pg["v30_synthetic_students"] == expected
-        and mongo["students"] == expected
+    same_master_ids = (
+        pg["student_profiles"] > 0
+        and pg["student_profiles"] == mongo["students"]
+        and pg["student_id_fingerprint"] == mongo["student_id_fingerprint"]
+    )
+    demo_baseline_intact = (
+        pg["v30_synthetic_students"] == expected
         and mongo["v30_synthetic_students"] == expected
     )
+    # Confirmed master imports may add real records beyond the 1,000-row demo
+    # baseline. Readiness therefore verifies the baseline plus exact cross-store
+    # student IDs instead of incorrectly requiring the total to remain 1,000.
+    synchronized = same_master_ids and (_is_production() or demo_baseline_intact)
     return {
         "success": True,
         "mode": "production" if _is_production() else "development",
         "data_origin": DATA_ORIGIN,
         "expected_student_count": expected,
+        "demo_baseline_intact": demo_baseline_intact,
+        "same_master_student_ids": same_master_ids,
         "postgres": pg,
         "mongo": mongo,
         "synchronized": synchronized,
         "message": (
-            "Synthetic demo dataset is synchronized across MongoDB and PostgreSQL."
+            "Student master IDs are synchronized across MongoDB and PostgreSQL."
             if synchronized
-            else "Dataset is not yet synchronized. Use the V30 bootstrap/seed command; list page limits are not database totals."
+            else "Student master data is not synchronized. Review import verification or use the V30 demo bootstrap when appropriate."
         ),
     }
 
@@ -173,6 +188,13 @@ def ensure_synthetic_dataset(*, train_router: bool = True) -> Dict[str, Any]:
         raise RuntimeError("Synthetic data bootstrap is disabled in production.")
     if not _env_truthy("DEMO_DATA_MODE", default=True):
         raise RuntimeError("DEMO_DATA_MODE is false. Refusing to create synthetic records.")
+    # Docker runs this command before Uvicorn starts, so interrupted two-store
+    # imports must be recovered here (not only in the FastAPI startup hook)
+    # before dataset integrity is evaluated.
+    from app.roles.admin.master_import_service import recover_incomplete_imports
+    recovery = recover_incomplete_imports()
+    if not recovery.get("success"):
+        raise RuntimeError("An interrupted master-data import could not be recovered safely.")
     current = dataset_status()
     if current["synchronized"]:
         return {**current, "seeded": False, "message": "Dataset already synchronized; no records were changed."}

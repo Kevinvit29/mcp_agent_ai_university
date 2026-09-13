@@ -42,6 +42,7 @@ def parse_student_own_course_query(message: str) -> Optional[Dict[str, Any]]:
     list_patterns = (
         r"\bwhich\s+(?:subjects?|courses?|classes?)\s+do\s+i\s+(?:study|take|learn)\b",
         r"\bwhat\s+(?:subjects?|courses?|classes?)\s+(?:do\s+i\s+(?:study|take)|am\s+i\s+(?:taking|studying))\b",
+        r"\b(?:which|what)\s+(?:subjects?|courses?|classes?)\s+am\s+i\s+(?:enrolled|registered)\s+in\b",
         r"\b(?:my|mine)\s+(?:studied\s+)?(?:subjects?|courses?|classes?)\b",
         r"(?:ฉัน|ผม|หนู).*(?:เรียน|ลงทะเบียน).*(?:วิชา|รายวิชา)",
     )

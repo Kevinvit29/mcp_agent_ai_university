@@ -29,7 +29,12 @@ Demo identities:
 Administrator: ADMIN
 Student:       S001
 Advisor:       A001
+Lecturer:      L001
 ```
+
+Synthetic Student, Advisor, and Lecturer accounts use `demo1234`. Lecturer
+accounts are separate `Lxxx` identities; each token contains a signed teaching
+scope that the browser cannot replace.
 
 The Administrator password is stored in PostgreSQL after the first account is
 created. Changing `.env` later does not change it. Use
@@ -59,7 +64,10 @@ python3 scripts/v30_control.py verify-backup backups/university-ai-TIMESTAMP.tar
 - `restart` recreates containers while preserving database volumes.
 - `stop` stops containers without deleting them.
 - `release` rebuilds the exact source and runs compile, regression, frontend,
-  service, dataset, AI-routing, end-to-end, and live database gates.
+  service, dataset, AI-routing, end-to-end, live database, and signed four-role
+  API gates. This is the one final command before a V30 handoff.
+- If the persisted Administrator password differs from `.env`, run release as
+  `V30_RELEASE_ADMIN_PASSWORD='current-password' python3 scripts/v30_control.py release`.
 - `backup` creates checksummed MongoDB and PostgreSQL archives.
 - `verify-backup` validates an archive without changing either database.
 
@@ -77,8 +85,10 @@ V30 has exactly five Docker Compose services:
 | `backend` | authentication, chat, reports, evaluation, and API | backend readiness passes |
 | `frontend` | browser interface and authenticated downloads | backend is healthy and nginx is running |
 
-The Administrator **Run system check** button also displays five checks, but
-those are application checks—not the five containers:
+For signed-in users, runtime health is checked automatically after every
+completed chat request. Administrator sessions run the complete five-part,
+read-only application check in the background; it is intentionally not shown as
+a separate interface:
 
 1. Runtime health
 2. Data consistency
@@ -86,7 +96,7 @@ those are application checks—not the five containers:
 4. End-to-end flow
 5. Live database connection
 
-If Docker reports 5/5 but the app reports 4/5, run:
+To inspect the automatic application result from the command line, run:
 
 ```bash
 python3 scripts/v30_control.py check
@@ -125,8 +135,19 @@ Signed user identity
 ```
 
 - AI interpretation can suggest intent, but it cannot expand access.
-- Student access is forced to the signed student's own record.
+- Student access is forced to the signed student's own record. Subject lists,
+  course-file authorization, spreadsheet agents, and semantic file search are
+  derived from current `student_course_enrollments`; the legacy
+  `student_subjects` copy is not an authorization source.
 - Advisor access is forced to assigned students and subjects that advisor teaches.
+- Lecturer access is forced to rosters, grades/scores, attendance, assessments,
+  and course files from that Lecturer's signed assigned courses only. Lecturer
+  files live in the separate `lecturer_documents` store and are owned by the
+  signed `Lxxx` account; the `Axxx` teaching scope is used only to verify class
+  assignment and student enrollment. Lecturers can upload/delete only their own
+  assigned-class files, and enrolled students can read those files. A Lecturer
+  cannot read university-wide GPA, finance, scholarships, support cases,
+  another Lecturer's classes, Advisor routes, or Administrator controls.
 - Administrator access is limited to registered administrative operations.
 - Unreviewed tools and PostgreSQL query types are denied by default.
 - Advisor counts are calculated after advisor assignment scope is applied.
@@ -205,8 +226,11 @@ regression test.
 | Area | Current file |
 |---|---|
 | FastAPI application assembly and chat | `backend/app/main.py` |
+| Reproducible answer-backend dependencies | `backend/requirements-lock.txt` |
+| Reproducible database-agent dependencies | `mcp_server/requirements-lock.txt` |
 | Admin role folder | `backend/app/roles/admin/` |
 | Advisor role folder | `backend/app/roles/advisor/` |
+| Lecturer role folder | `backend/app/roles/lecturer/` |
 | Student role folder | `backend/app/roles/student/` |
 | Signed role dependency | `backend/app/dependencies.py` |
 | Admin routes and database interface | `backend/app/roles/admin/router.py`, `repository.py` |
@@ -232,6 +256,8 @@ regression test.
 | Academic brain regression tests | `tests/test_v30_academic_brain.py` |
 | V30 prompt benchmark | `backend/app/agent/evaluation_cases.json` |
 | Live academic brain gate | `backend/app/agent/academic_brain_gate.py` |
+| Signed random-question gate | `backend/app/agent/random_question_gate.py` |
+| Signed four-role live release matrix | `scripts/check_roles_live.py` |
 
 Compatibility modules may remain temporarily when older code imports them.
 New work must use the current files in this table.
@@ -248,7 +274,7 @@ After backend changes:
 
 ```bash
 python3 -m compileall -q backend/app mcp_server/app
-python3 -m unittest discover -s tests -p 'test_v30_*.py' -v
+docker compose exec -T backend python -m pytest -q tests
 ```
 
 For normalized academic routing, policy, retrieval, validation, and grounded
@@ -256,6 +282,7 @@ answers against the live databases:
 
 ```bash
 docker compose exec -T backend python -m app.agent.academic_brain_gate
+docker compose exec -T backend python -m app.agent.random_question_gate
 ```
 
 After frontend or dependency changes:
@@ -268,8 +295,9 @@ Then run the acceptance questions again.
 
 ## Git with your other account
 
-This folder is now a local Git repository on branch `main`. It has no remote and
-no repository-specific name/email, so it is not connected to the wrong account.
+This folder is a local Git repository on branch `main`. Do not push its existing
+remote until it has been replaced with the repository owned by your intended
+Git account. No Step 1 or Step 2 changes were pushed to the old account.
 `.env`, backups, Python environments, caches, frontend dependencies, and
 generated output are ignored.
 
@@ -297,8 +325,8 @@ cleanup direction is:
 1. keep one public `/chat` route and one authoritative chat service;
 2. keep Admin, Advisor, and Student code inside their own `backend/app/roles/`
    folders; keep public runtime endpoints in their separate router;
-3. continue splitting the frontend into Chat, Files, Results, and Administrator System
-   components;
+3. continue splitting the frontend into Chat, Files, and Results components;
+   keep automatic health checks invisible during normal use;
 4. keep one table renderer and one authenticated report downloader;
 5. move old notes to `docs/archive_notes`;
 6. remove compatibility modules only after repository search and tests prove
@@ -315,14 +343,34 @@ This follows the documented patterns for maintainable applications:
 ## Remaining project order
 
 1. Keep the five services and five application checks stable.
-2. Complete the chat benchmark in English and Thai.
+2. Keep the completed English/Thai chat benchmark and random-question gate green.
 3. Continue splitting large backend and frontend files without changing behavior.
-4. Build master-data import, preview, validation, duplicate detection,
-   confirmation, synchronization, and rollback.
+4. Extend the completed Step 3 master-data foundation only when a new real
+   university data type is available. Student CSV/Excel preview, mapping,
+   validation, duplicate checks, confirmation, two-database verification,
+   audit history, and rollback are already implemented in V30.
 5. Add Administrator, Advisor, and Student dashboards.
-6. Run role-by-role security tests.
-7. Test backup restoration.
+6. Run the final role-by-role production security review.
+7. Demonstrate backup restoration on a disposable deployment.
 8. Package and deploy the final V30 release.
+
+## Administrator master-data workflow
+
+Open **Student data** in the Administrator right-side workspace. This is a
+separate workflow from **Files**:
+
+1. choose a CSV, XLSX, or XLS student master file;
+2. review the automatically detected column mapping and change it if needed;
+3. correct any required-field, type, range, email, or duplicate-ID errors;
+4. confirm the staged batch explicitly;
+5. let V30 update and verify PostgreSQL and MongoDB; and
+6. use the batch rollback action if the confirmed import must be undone.
+
+Preview never writes live student records. Each confirmed batch keeps its
+pre-import snapshots, rejects unsafe rollback after a newer change, and creates
+normal authenticated audit events. Administrator APIs also provide add/edit/
+deactivate workflows for students, advisors, and administrators, plus a secure
+administrator password-reset route.
 
 The detailed definition remains in
 `docs/current/V30_COMPLETION_DEFINITION.md`.

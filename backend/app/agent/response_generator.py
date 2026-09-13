@@ -50,6 +50,14 @@ ADVISOR ROLE PROMPT:
 - Never reveal GPA, phone, email, national_id, passport_id, address, or advisor_note for students.
 - If the advisor asks for all/everyone, answer only for students/subjects/documents included in allowed_data.
 """,
+    "lecturer": """
+LECTURER ROLE PROMPT:
+- Lecturers may access only courses assigned to their signed teaching identity.
+- For those courses, they may see class rosters, course grades/scores, attendance, assessments, and course summaries.
+- Never reveal a student's university-wide GPA, contact details, finance, scholarships, support cases, address, national/passport ID, or results from another lecturer's course.
+- A student ID does not grant access by itself; allowed_data must prove that the student is enrolled in the lecturer's assigned course.
+- If asked for university-wide rankings or another class, explain the teaching-scope restriction clearly.
+""",
     "student": """
 STUDENT ROLE PROMPT:
 - Students may only see their own record.
@@ -64,8 +72,11 @@ TASK_PROMPTS = {
     "ADMIN_DOCUMENT_AGENT_PROMPT": "When answering document questions, treat allowed_data as the uploaded PDF/Excel knowledge base. Be typo-tolerant and match misspelled user wording to filenames/document content when allowed_data supports it. If there is at least one document in allowed_data, use the best matching document and answer naturally from filename, summary, conclusion_table, and text_excerpt. Explain clearly in simple language, not just a raw summary. Do not say you have no data when documents are present. For short questions like 'ตำราจำหน่ายคืออะไร', give a concise Thai explanation of what the document says. For document-name requests, list filenames and IDs only unless asked for summaries. If exact wording is not found but recent documents are provided, explain the closest relevant uploaded document and say the exact wording was not found only if necessary.",
     "ADMIN_DIRECTORY_AGENT_PROMPT": "When listing names, list only student IDs and names. Do not include grades or private details.",
     "ADVISOR_GRADE_ANALYST_PROMPT": "Summarize only the advisor-visible subject grades in allowed_data. Do not mention hidden students or hidden fields.",
+    "LECTURER_GRADE_ANALYST_PROMPT": "Answer only from the signed lecturer's assigned-course rows in allowed_data. Show course grade/score, attendance, assessments, or roster facts requested; never infer or reveal university-wide GPA or unrelated courses.",
+    "LECTURER_AGENT_PROMPT": "Help the lecturer with teaching questions, while keeping all private data access inside assigned courses.",
     "ADVISOR_DOCUMENT_AGENT_PROMPT": "When answering document questions, use only advisor-owned subject PDF/Excel files in allowed_data. Be typo-tolerant: if a query spelling is close to a filename/title/subject, answer the closest allowed document. Mention subject_name and filename when helpful. Explain the content clearly in simple language, not just a raw summary. Do not reference admin/global PDF/Excel files.",
-    "STUDENT_ADVISOR_DOCUMENT_PROMPT": "When answering document questions, use only advisor-uploaded PDF/Excel files in allowed_data. These are already filtered to the logged-in student's enrolled subjects. Be typo-tolerant: if a query spelling is close to a filename/title/subject, answer the closest allowed document. Explain the file clearly in simple language with the main idea, useful details, and what the student should understand. If allowed_data is empty, say no advisor PDF/Excel file is available for the student's enrolled subjects.",
+    "LECTURER_DOCUMENT_AGENT_PROMPT": "Use only files owned by the signed Lecturer for their assigned classes. Never mix Advisor, Admin, or another Lecturer's files. Mention the class and filename when helpful, and answer from the retrieved content.",
+    "STUDENT_ADVISOR_DOCUMENT_PROMPT": "When answering document questions, use only Advisor- or Lecturer-uploaded files already filtered to the logged-in student's current enrollments. Be typo-tolerant and explain the closest allowed file clearly. If allowed_data is empty, say no course file is available for the student's current classes.",
     "STUDENT_SELF_DATA_AGENT_PROMPT": "Answer only about the logged-in student's own data.",
     "ADMIN_GENERAL_KNOWLEDGE_PROMPT": "Admin is asking a normal general-knowledge question that does not require university database data. Answer naturally like ChatGPT. Do not pretend to have live internet. If the answer requires current or real-time facts, clearly say a web-search tool should be added/used for verification.",
     "ADMIN_NORMAL_CHATGPT_PROMPT": "Admin is using normal ChatGPT mode. Help with anything text-based: writing, rewriting, grammar, coding, debugging, math, teaching, planning, brainstorming, summaries, translation, explanations, tables, and general knowledge. Use markdown/code blocks when helpful. Do not restrict the answer to university topics. Do not mention university tools unless the user asks for university/private/database/PDF/Excel data. If the request depends on live current information, say that a web-search tool would be needed for real-time verification.",
@@ -213,7 +224,7 @@ def _has_allowed_data(value: Any) -> bool:
 
 def _is_document_payload(payload: Dict[str, Any]) -> bool:
     args = payload.get("tool_arguments") or {}
-    return payload.get("selected_tool") == "postgres_university_tool" and args.get("query_type") in {"documents", "advisor_documents", "all_documents"}
+    return payload.get("selected_tool") == "postgres_university_tool" and args.get("query_type") in {"documents", "advisor_documents", "lecturer_documents", "course_documents", "all_documents"}
 
 def _call_ai_agent(payload: Dict[str, Any], system_prompt: str) -> Optional[str]:
     user = f"""
@@ -1133,11 +1144,11 @@ def _fallback_answer(user_message: str, language: str, user_role: str, plan: Dic
         if formatted:
             return formatted
 
-    if plan.get("tool_name") == "postgres_university_tool" and (plan.get("arguments") or {}).get("query_type") in {"documents", "advisor_documents", "all_documents"}:
+    if plan.get("tool_name") == "postgres_university_tool" and (plan.get("arguments") or {}).get("query_type") in {"documents", "advisor_documents", "lecturer_documents", "course_documents", "all_documents"}:
         return _format_documents(data, language, user_message, user_role=user_role)
 
     if data in ({}, [], None):
-        if plan.get("tool_name") == "postgres_university_tool" and (plan.get("arguments") or {}).get("query_type") in {"documents", "advisor_documents", "all_documents"}:
+        if plan.get("tool_name") == "postgres_university_tool" and (plan.get("arguments") or {}).get("query_type") in {"documents", "advisor_documents", "lecturer_documents", "course_documents", "all_documents"}:
             return _format_documents(data, language, user_message, user_role=user_role)
         return "ยังไม่พบข้อมูลที่ตรงกับคำถามนี้ค่ะ" if lang_th else "I couldn’t find that information in the data you’re allowed to access."
 

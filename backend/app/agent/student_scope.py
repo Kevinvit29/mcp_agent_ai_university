@@ -5,7 +5,7 @@ Student accounts may use university data only for:
 * the student record bound to the signed login;
 * normalized academic facts bound to that same student;
 * analytics over that student's own enrolled courses/terms;
-* learning files attached to a course in ``student_subjects``; and
+* learning files attached to a current ``student_course_enrollments`` row; and
 * non-personal public catalog/campus information.
 
 This guard runs after planning, so it also protects future AI-generated plans
@@ -38,6 +38,7 @@ STUDENT_OWN_POSTGRES_QUERY_TYPES = {
     "student_academic_profile",
     "student_subjects",
     "advisor_documents",
+    "course_documents",
     "advisor_subjects",
 }
 
@@ -132,6 +133,24 @@ def enforce_student_scope_plan(
             detail="The question names a student record other than the signed-in student.",
         )
 
+    normalized_message = str(message or "").lower().strip()
+    if (
+        re.search(
+            r"\b(?:list|show|find|give\s+me)\s+(?:everyone|everybody|all\s+(?:students?|learners?))\b",
+            normalized_message,
+        )
+        or any(
+            term in normalized_message
+            for term in ("รายชื่อนักศึกษาทั้งหมด", "แสดงนักศึกษาทั้งหมด")
+        )
+    ):
+        return _denial(
+            plan,
+            reason="student_own_scope_only",
+            message=message,
+            detail="Student accounts cannot list a broader student population.",
+        )
+
     tool_name = str(plan.get("tool_name") or "none")
     arguments = plan.get("arguments") if isinstance(plan.get("arguments"), dict) else {}
     operation = str(arguments.get("operation") or "")
@@ -222,7 +241,7 @@ def enforce_student_scope_plan(
         )
 
     if tool_name in {"pdf_tool", "excel_tool", "image_tool", "analyze_document_image"}:
-        # Exact document authorization is checked against student_subjects before
+        # Exact document authorization is checked against current enrollments before
         # any of these content tools receive a selected file.
         return plan
 

@@ -177,8 +177,38 @@ def run_end_to_end_gate() -> Dict[str, Any]:
         "how many students have GPA lower than 3.0",
         _purpose("students", "count"),
         "filter_summary", "aggregate_count",
-        {"type": "student_filter_summary", "field": "gpa", "operator": "$lt", "value": 3.0, "count": 2, "students": []},
+        {
+            "type": "student_filter_summary",
+            "count": 2,
+            "query_filter": {"gpa": {"$lt": 3.0}},
+            "metric_query": {
+                "field": "gpa",
+                "operator": "$lt",
+                "operator_text": "lower than",
+                "value": 3.0,
+            },
+            "students": [],
+        },
         "2",
+    ))
+    cases.append(_student_case(
+        "gpa_exact_count_screenshot_wording",
+        "how many student get gpa 4.00",
+        _purpose("students", "count"),
+        "filter_summary", "aggregate_count",
+        {
+            "type": "student_filter_summary",
+            "count": 7,
+            "query_filter": {"gpa": {"$eq": 4.0}},
+            "metric_query": {
+                "field": "gpa",
+                "operator": "$eq",
+                "operator_text": "equal to",
+                "value": 4.0,
+            },
+            "students": [],
+        },
+        "7",
     ))
     cases.append(_student_case(
         "student_top_five_ranking",

@@ -52,6 +52,8 @@ export default function LoginPage({ onLogin }) {
                 role: data.role,
                 studentId: data.student_id || '',
                 advisorId: data.advisor_id || '',
+                lecturerId: data.lecturer_id || '',
+                teachingScopeId: data.teaching_scope_id || '',
                 sessionId: data.session_id || '',
                 name: data.name,
                 accessToken: data.access_token || ''
@@ -82,13 +84,14 @@ export default function LoginPage({ onLogin }) {
                         >
                             <option value="student">Student</option>
                             <option value="advisor">Advisor</option>
+                            <option value="lecturer">Lecturer</option>
                             <option value="admin">Administrator</option>
                         </select>
                     </div>
 
                     <div className="form-group">
                         <label htmlFor="userId">
-                            {role === 'student' ? 'Student ID' : role === 'advisor' ? 'Advisor ID' : 'Admin ID'}:
+                            {role === 'student' ? 'Student ID' : role === 'advisor' ? 'Advisor ID' : role === 'lecturer' ? 'Lecturer ID' : 'Admin ID'}:
                         </label>
                         <input
                             id="userId"
@@ -130,6 +133,8 @@ export default function LoginPage({ onLogin }) {
                     <small>Student: S001 &nbsp; Password: demo1234</small>
                     <br />
                     <small>Advisor: A001 &nbsp; Password: demo1234</small>
+                    <br />
+                    <small>Lecturer: L001 &nbsp; Password: demo1234</small>
                     <p>
                         <small>
                             Fresh V30 demo: Administrator ID <strong>ADMIN</strong> / password <strong>admin123</strong>.

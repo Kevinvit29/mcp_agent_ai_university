@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import './style.css'
 import LoginPage from './LoginPage'
 import WorkspaceDataTable from './components/WorkspaceDataTable'
+import MasterDataImport from './components/MasterDataImport'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api'
 
@@ -29,6 +30,7 @@ export default function App() {
   const [userRole, setUserRole] = useState('student')
   const [studentId, setStudentId] = useState('')
   const [advisorId, setAdvisorId] = useState('')
+  const [lecturerId, setLecturerId] = useState('')
   const [sessionId, setSessionId] = useState('')
   const [userName, setUserName] = useState('')
   const [language, setLanguage] = useState('en')
@@ -48,15 +50,10 @@ export default function App() {
   const [dataAgentCount, setDataAgentCount] = useState(0)
   const [selectedDebugTrace, setSelectedDebugTrace] = useState(null)
   const [debugPanelOpen, setDebugPanelOpen] = useState(false)
-  const [systemHealth, setSystemHealth] = useState(null)
-  const [systemLoading, setSystemLoading] = useState(false)
-  const [systemCheckRunning, setSystemCheckRunning] = useState(false)
-  const [systemCheckResult, setSystemCheckResult] = useState(null)
   const [adminAccount, setAdminAccount] = useState(null)
   const [adminPasswordForm, setAdminPasswordForm] = useState({ current_password: '', new_password: '', confirm_password: '' })
   const [adminPasswordLoading, setAdminPasswordLoading] = useState(false)
   const [adminPasswordMessage, setAdminPasswordMessage] = useState('')
-  const [reindexingAgents, setReindexingAgents] = useState(false)
   const [evaluationReport, setEvaluationReport] = useState(null)
   const [evaluationLoading, setEvaluationLoading] = useState(false)
   const [qualityGateReport, setQualityGateReport] = useState(null)
@@ -66,12 +63,9 @@ export default function App() {
   const [liveSmokeReport, setLiveSmokeReport] = useState(null)
   const [liveSmokeLoading, setLiveSmokeLoading] = useState(false)
   const [dataTruth, setDataTruth] = useState(null)
-  const [semanticTraining, setSemanticTraining] = useState(false)
   const [autoTrainingStatus, setAutoTrainingStatus] = useState(null)
   const [autoTrainingLoading, setAutoTrainingLoading] = useState(false)
   const [neuralRouterStatus, setNeuralRouterStatus] = useState(null)
-  const [neuralRouterTraining, setNeuralRouterTraining] = useState(false)
-  const [knowledgeTab, setKnowledgeTab] = useState('files')
   const [librarySearch, setLibrarySearch] = useState('')
   const [libraryFilter, setLibraryFilter] = useState('all')
   const [showAllDocuments, setShowAllDocuments] = useState(false)
@@ -84,13 +78,15 @@ export default function App() {
   const [learningReviewMemories, setLearningReviewMemories] = useState([])
   const [learningReviewFeedback, setLearningReviewFeedback] = useState([])
   const [learningControlLoading, setLearningControlLoading] = useState(false)
+  const [adminWorkspaceTab, setAdminWorkspaceTab] = useState('files')
   const messagesEndRef = useRef(null)
 
   const identityParams = useMemo(() => new URLSearchParams({
     user_role: userRole,
     requester_student_id: studentId || '',
-    requester_advisor_id: advisorId || ''
-  }), [userRole, studentId, advisorId])
+    requester_advisor_id: advisorId || '',
+    requester_lecturer_id: lecturerId || ''
+  }), [userRole, studentId, advisorId, lecturerId])
 
   // Every protected endpoint receives the signed login token. The backend ignores
   // any role/ID values in the request when they disagree with this token.
@@ -98,6 +94,26 @@ export default function App() {
     const headers = new Headers(options.headers || {})
     if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
     return window.fetch(url, { ...options, headers })
+  }
+
+  const runBackgroundHealthCheck = async () => {
+    if (!isLoggedIn || !accessToken) return
+    const isAdmin = userRole === 'admin'
+    const url = isAdmin
+      ? `${API_BASE}/admin/system-check/run?user_role=admin`
+      : `${API_BASE}/system/health`
+    try {
+      const res = await window.fetch(url, {
+        method: isAdmin ? 'POST' : 'GET',
+        headers: { Authorization: `Bearer ${accessToken}` }
+      })
+      const data = await res.json()
+      if (!res.ok || (isAdmin ? !data?.success : data?.status !== 'healthy')) {
+        console.warn('Background system health check needs attention.', data)
+      }
+    } catch (error) {
+      console.warn('Background system health check could not connect.', error)
+    }
   }
 
 
@@ -118,7 +134,8 @@ export default function App() {
   const handleLogin = (loginData) => {
     setUserRole(loginData.role)
     setStudentId(loginData.studentId || '')
-    setAdvisorId(loginData.advisorId || '')
+    setAdvisorId(loginData.advisorId || loginData.teachingScopeId || '')
+    setLecturerId(loginData.lecturerId || '')
     setSessionId(loginData.sessionId || '')
     setUserName(loginData.name || '')
     setAccessToken(loginData.accessToken || '')
@@ -133,6 +150,7 @@ export default function App() {
     setInput('')
     setStudentId('')
     setAdvisorId('')
+    setLecturerId('')
     setSessionId('')
     setUserName('')
     setDocuments([])
@@ -148,13 +166,10 @@ export default function App() {
     setDataAgentCount(0)
     setSelectedDebugTrace(null)
     setDebugPanelOpen(false)
-    setSystemHealth(null)
-    setSystemLoading(false)
     setAdminAccount(null)
     setAdminPasswordForm({ current_password: '', new_password: '', confirm_password: '' })
     setAdminPasswordLoading(false)
     setAdminPasswordMessage('')
-    setReindexingAgents(false)
     setEvaluationReport(null)
     setEvaluationLoading(false)
     setQualityGateReport(null)
@@ -162,10 +177,8 @@ export default function App() {
     setEndToEndReport(null)
     setEndToEndLoading(false)
     setDataTruth(null)
-    setSemanticTraining(false)
     setAutoTrainingStatus(null)
     setAutoTrainingLoading(false)
-    setKnowledgeTab('files')
     setLibrarySearch('')
     setLibraryFilter('all')
     setShowAllDocuments(false)
@@ -177,6 +190,7 @@ export default function App() {
     setLearningReviewMemories([])
     setLearningReviewFeedback([])
     setLearningControlLoading(false)
+    setAdminWorkspaceTab('files')
   }
 
   const refreshSessions = async () => {
@@ -246,15 +260,22 @@ export default function App() {
   useEffect(() => {
     if (!isLoggedIn) return
     refreshSessions().catch(() => {})
-    if (userRole === 'admin' || userRole === 'advisor' || userRole === 'student') {
+    if (userRole === 'admin' || userRole === 'advisor' || userRole === 'lecturer' || userRole === 'student') {
       loadDocuments().catch(() => {})
       loadLearningMemories().catch(() => {})
       loadDataAgents().catch(() => {})
-      loadSystemHealth().catch(() => {})
       if (userRole === 'admin') { loadAdminAccount().catch(() => {}); loadEvaluationReport().catch(() => {}); loadQualityGateReport().catch(() => {}); loadEndToEndReport().catch(() => {}); loadLiveSmokeReport().catch(() => {}); loadDataTruth().catch(() => {}); loadAutoTrainingStatus().catch(() => {}); loadNeuralRouterStatus().catch(() => {}); loadLearningControl().catch(() => {}) }
     }
-    if (userRole === 'advisor') loadAdvisorSubjects().catch(() => {})
+    if (userRole === 'advisor' || userRole === 'lecturer') loadAdvisorSubjects().catch(() => {})
   }, [isLoggedIn, identityParams])
+
+  // Run once after login. Every completed chat request triggers another check
+  // from sendMessage, so no timer or visible system panel is needed.
+  useEffect(() => {
+    if (!isLoggedIn || !accessToken) return undefined
+    runBackgroundHealthCheck()
+    return undefined
+  }, [isLoggedIn, accessToken, userRole])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -547,6 +568,9 @@ const downloadProtectedReport = async (rawUrl) => {
       setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${error.message}` }])
     } finally {
       setLoading(false)
+      // Do not await: the answer is already visible while the read-only health
+      // check runs silently in the background after every message.
+      runBackgroundHealthCheck()
     }
   }
 
@@ -585,11 +609,11 @@ const downloadProtectedReport = async (rawUrl) => {
     const file = e.target.elements.knowledge_file.files[0]
     if (!file) return
     if (userRole === 'student') {
-      setUploadMessage('Students can read allowed advisor PDF/Excel files, but cannot upload files.')
+      setUploadMessage('Students can read files for their current enrolled courses, but cannot upload files.')
       return
     }
-    if (userRole === 'advisor' && !selectedSubjectCode) {
-      setUploadMessage('Please choose the subject for this advisor file.')
+    if ((userRole === 'advisor' || userRole === 'lecturer') && !selectedSubjectCode) {
+      setUploadMessage(`Please choose the ${userRole === 'lecturer' ? 'class' : 'subject'} for this file.`)
       return
     }
 
@@ -606,6 +630,12 @@ const downloadProtectedReport = async (rawUrl) => {
       formData.append('requester_advisor_id', advisorId)
       formData.append('subject_code', selectedSubjectCode)
       formData.append('uploaded_by', advisorId || 'ADVISOR')
+    } else if (userRole === 'lecturer') {
+      endpoint = `${API_BASE}/lecturer/documents/upload`
+      formData.append('requester_lecturer_id', lecturerId)
+      formData.append('requester_advisor_id', advisorId)
+      formData.append('subject_code', selectedSubjectCode)
+      formData.append('uploaded_by', lecturerId || 'LECTURER')
     }
 
     setUploading(true)
@@ -635,9 +665,10 @@ const downloadProtectedReport = async (rawUrl) => {
   }
 
   const loadAdvisorSubjects = async () => {
-    if (userRole !== 'advisor' || !advisorId) return
-    const params = new URLSearchParams({ user_role: 'advisor', requester_advisor_id: advisorId })
-    const res = await apiFetch(`${API_BASE}/advisor/subjects?${params.toString()}`)
+    if (!['advisor', 'lecturer'].includes(userRole) || !advisorId) return
+    const params = new URLSearchParams({ user_role: userRole, requester_advisor_id: advisorId })
+    const endpoint = userRole === 'lecturer' ? '/lecturer/subjects' : '/advisor/subjects'
+    const res = await apiFetch(`${API_BASE}${endpoint}?${params.toString()}`)
     const data = await res.json()
     if (data.success) {
       const subjects = data.subjects || []
@@ -680,19 +711,6 @@ const downloadProtectedReport = async (rawUrl) => {
       setAdminPasswordMessage(err.message || 'Password could not be updated.')
     } finally {
       setAdminPasswordLoading(false)
-    }
-  }
-
-  const loadSystemHealth = async () => {
-    setSystemLoading(true)
-    try {
-      const res = await apiFetch(`${API_BASE}/system/health`)
-      const data = await res.json()
-      setSystemHealth(data)
-    } catch (err) {
-      setSystemHealth({ success: false, status: 'unreachable', error: err.message })
-    } finally {
-      setSystemLoading(false)
     }
   }
 
@@ -828,53 +846,6 @@ const downloadProtectedReport = async (rawUrl) => {
     }
   }
 
-  const runSystemCheck = async () => {
-  if (userRole !== "admin") return
-
-  setSystemCheckRunning(true)
-  setSystemCheckResult(null)
-
-  try {
-    const res = await apiFetch(
-      `${API_BASE}/admin/system-check/run?user_role=admin`,
-      { method: "POST" }
-    )
-
-    const data = await res.json()
-
-    if (!res.ok || !data) {
-      throw new Error(data?.detail || "System check could not run.")
-    }
-
-    setSystemCheckResult(data)
-    setSystemHealth({
-      success: data.success,
-      status: data.status,
-    })
-
-    setUploadMessage(
-      data.success
-        ? `System check passed: ${data.summary.passed}/${data.summary.total} checks are ready.`
-        : `System check found issues: ${data.summary.passed}/${data.summary.total} checks passed.`
-    )
-  } catch (err) {
-    setSystemCheckResult({
-      success: false,
-      status: "error",
-      summary: { passed: 0, total: 0 },
-      checks: [
-        {
-          name: "System check",
-          ok: false,
-          message: err.message,
-        },
-      ],
-    })
-  } finally {
-    setSystemCheckRunning(false)
-  }
-}
-
   const loadAutoTrainingStatus = async () => {
     if (userRole !== 'admin') return
     const res = await apiFetch(`${API_BASE}/ai/training/status?user_role=admin`)
@@ -887,71 +858,6 @@ const downloadProtectedReport = async (rawUrl) => {
     const res = await apiFetch(`${API_BASE}/ai/training/neural-router/status?user_role=admin`)
     const data = await res.json()
     if (res.ok && data?.neural_router) setNeuralRouterStatus(data.neural_router)
-  }
-
-  const trainNeuralRouter = async () => {
-    if (userRole !== 'admin') return
-    setNeuralRouterTraining(true)
-    try {
-      const res = await apiFetch(`${API_BASE}/ai/training/neural-router/run?user_role=admin&force=true`, { method: 'POST' })
-      const data = await res.json()
-      if (!res.ok || data?.success === false) {
-        setUploadMessage(data?.detail || data?.error || 'Neural router training failed.')
-      } else {
-        const metrics = data?.metrics || data?.neural_router?.metrics || {}
-        const accuracy = metrics?.validation_accuracy
-        const displayAccuracy = typeof accuracy === 'number' ? ` Validation accuracy ${(accuracy * 100).toFixed(1)}%.` : ''
-        setUploadMessage(`Neural router trained locally from ${data?.training_examples || data?.neural_router?.training_examples || 0} approved examples.${displayAccuracy} It does not fine-tune Gemini or use raw student records as training text.`)
-      }
-      await loadNeuralRouterStatus().catch(() => {})
-    } catch (err) {
-      setUploadMessage(`Neural router training error: ${err.message}`)
-    } finally {
-      setNeuralRouterTraining(false)
-    }
-  }
-
-  const trainSemanticDataAgents = async () => {
-    if (userRole !== 'admin') return
-    setSemanticTraining(true)
-    setAutoTrainingLoading(true)
-    try {
-      const res = await apiFetch(`${API_BASE}/ai/training/run-local?user_role=admin`, { method: 'POST' })
-      const data = await res.json()
-      if (!res.ok || data.success === false) {
-        setUploadMessage(data.detail || data.error || data.errors?.join('; ') || 'Local automatic training failed')
-      } else if (data.status === 'already_running') {
-        setUploadMessage('Automatic local training is already running. No duplicate training job was started.')
-      } else {
-        setUploadMessage(`Local training completed: ${data.sources_changed || 0} changed source(s), ${data.sources_skipped || 0} unchanged source(s) skipped. No Gemini tokens were used.`)
-      }
-      await Promise.all([loadDataAgents().catch(() => {}), loadDataTruth().catch(() => {}), loadAutoTrainingStatus().catch(() => {})])
-    } catch (err) {
-      setUploadMessage(`Local training error: ${err.message}`)
-    } finally {
-      setSemanticTraining(false)
-      setAutoTrainingLoading(false)
-    }
-  }
-
-  const reindexExistingDataAgents = async () => {
-    if (userRole !== 'admin') return
-    setReindexingAgents(true)
-    try {
-      const res = await apiFetch(`${API_BASE}/ai/data-agents/reindex-existing?user_role=admin`, { method: 'POST' })
-      const data = await res.json()
-      if (!res.ok || data.success === false) {
-        setUploadMessage(data.detail || data.errors?.join('; ') || 'Reindex failed')
-      } else {
-        setUploadMessage(`Reindexed existing database agents: ${data.indexed_agent_count || 0} table/collection agent(s).`)
-      }
-      await loadDataAgents().catch(() => {})
-      await loadSystemHealth().catch(() => {})
-    } catch (err) {
-      setUploadMessage(`Reindex error: ${err.message}`)
-    } finally {
-      setReindexingAgents(false)
-    }
   }
 
   const loadLearningMemories = async () => {
@@ -1048,6 +954,9 @@ const downloadProtectedReport = async (rawUrl) => {
     if (userRole === 'advisor') {
       const params = new URLSearchParams({ user_role: 'advisor', requester_advisor_id: advisorId || '' })
       url = `${API_BASE}/advisor/documents?${params.toString()}`
+    } else if (userRole === 'lecturer') {
+      const params = new URLSearchParams({ user_role: 'lecturer', requester_advisor_id: advisorId || '' })
+      url = `${API_BASE}/lecturer/documents?${params.toString()}`
     } else if (userRole === 'student') {
       const params = new URLSearchParams({ user_role: 'student', requester_student_id: studentId || '' })
       url = `${API_BASE}/student/documents?${params.toString()}`
@@ -1087,6 +996,9 @@ const openDocumentTable = async (doc) => {
     if (userRole === 'advisor') {
       const params = new URLSearchParams({ user_role: 'advisor', requester_advisor_id: advisorId || '' })
       url = `${API_BASE}/advisor/documents/${doc.id}?${params.toString()}`
+    } else if (userRole === 'lecturer') {
+      const params = new URLSearchParams({ user_role: 'lecturer', requester_lecturer_id: lecturerId || '', requester_advisor_id: advisorId || '' })
+      url = `${API_BASE}/lecturer/documents/${doc.id}?${params.toString()}`
     }
 
     try {
@@ -1461,6 +1373,7 @@ const openDocumentTable = async (doc) => {
                   <span className="pill">Name: {userName}</span>
                   {userRole === 'student' && <span className="pill">Student ID: {studentId}</span>}
                   {userRole === 'advisor' && <span className="pill">Advisor ID: {advisorId}</span>}
+                  {userRole === 'lecturer' && <span className="pill">Lecturer ID: {lecturerId}</span>}
                 </div>
               </div>
               <select value={language} onChange={(e) => setLanguage(e.target.value)} className="language-select">
@@ -1507,13 +1420,24 @@ const openDocumentTable = async (doc) => {
               <div className="input-wrap">
                 <div className="quick-prompts">
                   {userRole === 'student' && <>
-                    <button type="button" onClick={() => askQuick('what is my grade')}>My grades</button>
-                    <button type="button" onClick={() => askQuick('what PDF or Excel files can I access?')}>My files</button>
                     <button type="button" onClick={() => askQuick('what is my profile?')}>My profile</button>
+                    <button type="button" onClick={() => askQuick('list my enrolled subjects')}>My subjects</button>
+                    <button type="button" onClick={() => askQuick('show my grades and scores')}>Grades & scores</button>
+                    <button type="button" onClick={() => askQuick('show my attendance')}>Attendance</button>
+                    <button type="button" onClick={() => askQuick('show my assessment results')}>Assessments</button>
+                    <button type="button" onClick={() => askQuick('show my tuition balance')}>Tuition</button>
+                    <button type="button" onClick={() => askQuick('show my scholarships')}>Scholarships</button>
+                    <button type="button" onClick={() => askQuick('list my course files')}>Course files</button>
                   </>}
                   {userRole === 'advisor' && <>
                     <button type="button" onClick={() => askQuick('show students I teach')}>My students</button>
                     <button type="button" onClick={() => askQuick('what PDF or Excel files have I uploaded?')}>My files</button>
+                  </>}
+                  {userRole === 'lecturer' && <>
+                    <button type="button" onClick={() => askQuick('list my assigned classes')}>My classes</button>
+                    <button type="button" onClick={() => askQuick('show students in my classes')}>Class rosters</button>
+                    <button type="button" onClick={() => askQuick('average attendance in my classes')}>Attendance</button>
+                    <button type="button" onClick={() => askQuick('rank students by score in my classes')}>Course grades</button>
                   </>}
                   {userRole === 'admin' && <>
                     <button type="button" onClick={() => askQuick('explain machine learning simply')}>Normal chat</button>
@@ -1529,27 +1453,23 @@ const openDocumentTable = async (doc) => {
             </form>
           </main>
 
-          {(userRole === 'admin' || userRole === 'advisor' || userRole === 'student') && (
+          {(userRole === 'admin' || userRole === 'advisor' || userRole === 'lecturer' || userRole === 'student') && (
             <aside className="admin-right-panel knowledge-rail">
               <div className="right-panel-header knowledge-rail-header">
                 <div>
-                  <p className="eyebrow">Knowledge workspace</p>
-                  <h2>{userRole === 'admin' ? 'University knowledge' : userRole === 'advisor' ? 'My subject knowledge' : 'My learning files'}</h2>
-                  <p className="panel-help compact-help">Upload, review, and ask questions about your stored PDF, Excel, and CSV knowledge.</p>
+                  <p className="eyebrow">{userRole === 'admin' && adminWorkspaceTab === 'data' ? 'Database workspace' : 'Knowledge workspace'}</p>
+                  <h2>{userRole === 'admin' ? (adminWorkspaceTab === 'data' ? 'University master data' : 'University knowledge') : userRole === 'advisor' ? 'My subject knowledge' : userRole === 'lecturer' ? 'My course knowledge' : 'My learning files'}</h2>
+                  <p className="panel-help compact-help">{userRole === 'admin' && adminWorkspaceTab === 'data' ? 'Preview, validate, synchronize, and roll back student database imports.' : userRole === 'student' ? 'Read and ask questions only from files attached to your current enrolled courses.' : userRole === 'lecturer' ? 'Upload and manage files only for your assigned teaching courses.' : 'Upload, review, and ask questions about your stored PDF, Excel, and CSV knowledge.'}</p>
                 </div>
                 <span className="doc-count">{documents.length}</span>
               </div>
-              <div className="knowledge-tabs" role="tablist" aria-label="Knowledge workspace tabs">
-                <button type="button" className={knowledgeTab === 'files' ? 'active' : ''} onClick={() => setKnowledgeTab('files')}>Files</button>
-                {userRole === 'admin' && <button type="button" className={knowledgeTab === 'system' ? 'active' : ''} onClick={() => setKnowledgeTab('system')}>System</button>}
-              </div>
-              {knowledgeTab === 'files' || userRole !== 'admin' ? (
-                <div className="knowledge-files-pane">
-                  {(userRole === 'admin' || userRole === 'advisor') && (
+              {userRole === 'admin' && <div className="workspace-mode-tabs"><button type="button" className={adminWorkspaceTab === 'files' ? 'active' : ''} onClick={() => setAdminWorkspaceTab('files')}>Files</button><button type="button" className={adminWorkspaceTab === 'data' ? 'active' : ''} onClick={() => setAdminWorkspaceTab('data')}>Student data</button></div>}
+              {userRole === 'admin' && adminWorkspaceTab === 'data' ? <MasterDataImport apiFetch={apiFetch} onCompleted={runBackgroundHealthCheck} /> : <div className="knowledge-files-pane">
+                  {(userRole === 'admin' || userRole === 'advisor' || userRole === 'lecturer') && (
                     <form onSubmit={uploadKnowledgeFile} className="knowledge-upload-card">
                       <div className="upload-card-heading"><div><p className="eyebrow">Add knowledge</p><h3>Upload a PDF, Excel, or CSV</h3></div><span className="upload-agent-badge">Local index</span></div>
                       <p>Files become a searchable knowledge source with a clean data overview and a dedicated data agent.</p>
-                      {userRole === 'advisor' && <label className="form-field"><span>Subject</span><select value={selectedSubjectCode} onChange={(e) => setSelectedSubjectCode(e.target.value)}>{advisorSubjects.length === 0 ? <option value="">No subjects available</option> : advisorSubjects.map(subject => <option key={subject.subject_code} value={subject.subject_code}>{subject.subject_name}</option>)}</select></label>}
+                      {(userRole === 'advisor' || userRole === 'lecturer') && <label className="form-field"><span>{userRole === 'lecturer' ? 'Class' : 'Subject'}</span><select value={selectedSubjectCode} onChange={(e) => setSelectedSubjectCode(e.target.value)}>{advisorSubjects.length === 0 ? <option value="">No classes available</option> : advisorSubjects.map(subject => <option key={subject.subject_code} value={subject.subject_code}>{subject.subject_name}</option>)}</select></label>}
                       <label className="form-field"><span>Store as</span><select value={storageTarget} onChange={(e) => setStorageTarget(e.target.value)}><option value="postgres">PostgreSQL knowledge record</option><option value="mongodb">MongoDB knowledge clone</option><option value="excel">Excel-agent structured store</option></select></label>
                       <label className="file-picker-label"><input name="knowledge_file" type="file" accept="application/pdf,.pdf,.xlsx,.xls,.csv" onChange={(e) => setSelectedUploadFileName(e.target.files?.[0]?.name || '')} /><span>{selectedUploadFileName || 'Choose a PDF, Excel, or CSV file'}</span></label>
                       <button type="submit" className="upload-primary-button" disabled={uploading || !selectedUploadFileName}>{uploading ? 'Processing knowledge…' : 'Create knowledge source'}</button>
@@ -1558,116 +1478,14 @@ const openDocumentTable = async (doc) => {
                   {uploading && <div className="upload-progress-card">Reading and structuring the file. Please wait.</div>}
                   {uploadMessage && <div className="upload-result-card"><strong>{lastUploadedDocument ? 'Knowledge source ready' : 'Workspace update'}</strong><p>{uploadMessage}</p>{lastUploadedDocument && <button type="button" onClick={() => openDocumentTable(lastUploadedDocument)}>Open workspace</button>}</div>}
                   <div className="file-library-toolbar"><div><p className="eyebrow">File library</p><h3>{filteredDocuments.length} matching file{filteredDocuments.length === 1 ? '' : 's'}</h3></div><button type="button" className="refresh-library-button" onClick={loadDocuments}>Refresh</button></div>
-                  <div className="library-controls"><input value={librarySearch} onChange={(e) => { setLibrarySearch(e.target.value); setShowAllDocuments(false) }} placeholder="Search file names or topics" /><select value={libraryFilter} onChange={(e) => { setLibraryFilter(e.target.value); setShowAllDocuments(false) }}><option value="all">All file types</option><option value="pdf">PDF</option><option value="excel">Excel / CSV</option></select></div>
                   <div className="document-list compact-document-list">
-                    {filteredDocuments.length === 0 ? <div className="empty-docs"><strong>No matching files.</strong><br />Upload a document or change the search/filter.</div> : (showAllDocuments ? filteredDocuments : filteredDocuments.slice(0, 5)).map(doc => {
+                    {filteredDocuments.length === 0 ? <div className="empty-docs"><strong>No matching files.</strong><br />{userRole === 'student' ? 'No file is attached to your current enrolled courses, or the search/filter has no match.' : 'Upload a document or change the search/filter.'}</div> : (showAllDocuments ? filteredDocuments : filteredDocuments.slice(0, 5)).map(doc => {
                       const profile = buildDocumentProfile(doc)
                       return <article className="knowledge-file-card" key={doc.global_id || `${doc.document_scope || 'doc'}-${doc.id}`}><div className="knowledge-file-icon">{profile.source_type === 'excel' ? '▦' : '▤'}</div><div className="knowledge-file-main"><div className="knowledge-file-topline"><span className={`file-type-pill ${profile.source_type === 'excel' ? 'excel' : 'pdf'}`}>{String(profile.source_type || 'file').toUpperCase()}</span><span className="storage-pill mini">{profile.storage?.target || doc.storage_target || 'postgres'}</span>{doc.subject_name && <span className="subject-pill">{doc.subject_name}</span>}</div><h3 title={doc.filename}>{doc.filename}</h3><p>{profile.summary || doc.summary || 'Structured knowledge source ready for questions.'}</p><small>{(profile.facts || []).slice(0, 2).map(item => `${item.label}: ${item.value}`).join(' · ') || 'Searchable knowledge source'}</small><div className="knowledge-file-actions"><button type="button" className="open-workspace-button" onClick={() => openDocumentTable(doc)} disabled={documentLoading}>Open</button><button type="button" className="secondary-file-button" onClick={() => askQuick('What is this file about?', doc)}>Ask</button>{userRole !== 'student' && <button type="button" className="icon-delete-button" title={`Delete ${doc.filename}`} onClick={(e) => deleteDocument(doc, e)}>×</button>}</div></div></article>
                     })}
                   </div>
                   {filteredDocuments.length > 5 && <button type="button" className="show-more-files-button" onClick={() => setShowAllDocuments(value => !value)}>{showAllDocuments ? 'Show fewer files' : `Show all ${filteredDocuments.length} files`}</button>}
-                </div>
-              ) : (
-                <div className="system-workspace-pane">
-  <section className="system-check-card">
-    <p className="eyebrow">System status</p>
-
-    <h3>
-      {systemCheckResult?.status === "ready"
-        ? "University AI is ready"
-        : systemCheckResult?.status === "needs_attention"
-          ? "Needs attention"
-          : "System check has not run"}
-    </h3>
-
-    <p>
-      One check confirms backend health, database connections,
-      AI routing rules, report flow, and data consistency.
-    </p>
-
-    <button
-      type="button"
-      className="upload-primary-button"
-      onClick={runSystemCheck}
-      disabled={systemCheckRunning}
-    >
-      {systemCheckRunning ? "Checking system…" : "Run system check"}
-    </button>
-
-    {systemCheckResult && (
-      <div className="system-check-result">
-        <strong>
-          {systemCheckResult.summary?.passed || 0}/
-          {systemCheckResult.summary?.total || 0} checks passed
-        </strong>
-
-        <div className="system-check-list">
-          {(systemCheckResult.checks || []).map((check) => (
-            <div
-              key={check.name}
-              className={`system-check-row ${check.ok ? "ok" : "failed"}`}
-            >
-              <span>{check.ok ? "✓" : "!"}</span>
-              <div>
-                <strong>{check.name}</strong>
-                {!check.ok && check.message && (
-                  <small>{check.message}</small>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    )}
-  </section>
-
-  <details className="system-accordion">
-    <summary>
-      <span>Advanced maintenance</span>
-      <small>Admin only</small>
-    </summary>
-
-    <p>
-      Use these only after a system check identifies a specific issue.
-    </p>
-
-    <button
-      type="button"
-      className="mini-action-button"
-      onClick={trainSemanticDataAgents}
-      disabled={semanticTraining}
-    >
-      {semanticTraining ? "Updating…" : "Refresh search index"}
-    </button>
-
-    <button
-      type="button"
-      className="mini-action-button"
-      onClick={trainNeuralRouter}
-      disabled={neuralRouterTraining}
-    >
-      {neuralRouterTraining ? "Training…" : "Train AI router"}
-    </button>
-
-    <button
-      type="button"
-      className="mini-action-button"
-      onClick={reindexExistingDataAgents}
-      disabled={reindexingAgents}
-    >
-      {reindexingAgents ? "Updating…" : "Repair data indexes"}
-    </button>
-
-    <button
-      type="button"
-      className="text-action-button"
-      onClick={() => setDebugPanelOpen(true)}
-    >
-      Open technical trace
-    </button>
-  </details>
-</div>
-              )}
+              </div>}
             </aside>
           )}
         </div>

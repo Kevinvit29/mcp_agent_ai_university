@@ -60,8 +60,8 @@ def _verify_account_password(account: dict, password: str, legacy_field: str) ->
     return False
 
 
-def _login_response(request: Request, *, role: str, subject_id: str, name: str, session_id: str, extra: Optional[dict] = None) -> dict:
-    token, identity = issue_access_token(role, subject_id)
+def _login_response(request: Request, *, role: str, subject_id: str, name: str, session_id: str, extra: Optional[dict] = None, scope_id: Optional[str] = None) -> dict:
+    token, identity = issue_access_token(role, subject_id, scope_id=scope_id)
     request.state.authenticated_identity = identity
     payload = {
         "success": True,
@@ -86,7 +86,7 @@ def login(payload: dict, request: Request):
 
     if role == "student":
         student = mongo_db.students.find_one({"student_id": user_id}, {"_id": 0})
-        if not student or not _verify_account_password(student, password, "national_id"):
+        if not student or student.get("is_active") is False or not _verify_account_password(student, password, "national_id"):
             raise HTTPException(status_code=401, detail="Invalid student credentials.")
         session_id = get_or_create_session(None, "student", requester_student_id=student["student_id"])
         return _login_response(
@@ -100,7 +100,7 @@ def login(payload: dict, request: Request):
 
     if role == "advisor":
         advisor = mongo_db.advisors.find_one({"advisor_id": user_id}, {"_id": 0})
-        if not advisor or not _verify_account_password(advisor, password, "phone"):
+        if not advisor or advisor.get("is_active") is False or not _verify_account_password(advisor, password, "phone"):
             raise HTTPException(status_code=401, detail="Invalid advisor credentials.")
         session_id = get_or_create_session(None, "advisor", requester_advisor_id=advisor["advisor_id"])
         return _login_response(
@@ -110,6 +110,24 @@ def login(payload: dict, request: Request):
             name=advisor["name"],
             session_id=session_id,
             extra={"advisor_id": advisor["advisor_id"]},
+        )
+
+    if role == "lecturer":
+        lecturer = mongo_db.lecturers.find_one({"lecturer_id": user_id}, {"_id": 0})
+        if not lecturer or lecturer.get("is_active") is False or not _verify_account_password(lecturer, password, "phone"):
+            raise HTTPException(status_code=401, detail="Invalid lecturer credentials.")
+        teaching_scope_id = str(lecturer.get("advisor_scope_id") or "").upper().strip()
+        if not teaching_scope_id:
+            raise HTTPException(status_code=403, detail="Lecturer account has no assigned teaching scope.")
+        session_id = get_or_create_session(None, "lecturer", requester_advisor_id=teaching_scope_id)
+        return _login_response(
+            request,
+            role="lecturer",
+            subject_id=lecturer["lecturer_id"],
+            name=lecturer["name"],
+            session_id=session_id,
+            scope_id=teaching_scope_id,
+            extra={"lecturer_id": lecturer["lecturer_id"], "teaching_scope_id": teaching_scope_id},
         )
 
     if role == "admin":

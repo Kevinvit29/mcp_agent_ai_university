@@ -32,6 +32,8 @@ NON_ADMIN_POSTGRES_QUERY_TYPES = {
     "course_catalog",
     "student_academic_profile",
     "advisor_documents",
+    "lecturer_documents",
+    "course_documents",
     "advisor_subjects",
     "student_subjects",
     "academic_analytics",
@@ -48,6 +50,7 @@ DATABASE_WORKER_OPERATIONS = {
 ACADEMIC_SECTIONS_BY_ROLE = {
     "admin": {"profile", "enrollments", "assessments", "attendance", "financial_accounts", "support_cases", "scholarship_awards"},
     "advisor": {"enrollments", "assessments", "attendance"},
+    "lecturer": {"enrollments", "assessments", "attendance"},
     "student": {"profile", "enrollments", "assessments", "attendance", "financial_accounts", "scholarship_awards"},
 }
 
@@ -122,7 +125,7 @@ def check_pdpa_policy(
                 }
             return {"allowed": True, "reason": "Student can access own record only."}
 
-        if user_role == "advisor":
+        if user_role in {"advisor", "lecturer"}:
             if not requester_advisor_id:
                 return {"allowed": False, "reason": "Advisor role requires logged-in advisor ID."}
             return {
@@ -148,8 +151,8 @@ def check_pdpa_policy(
         if query_type == "student_academic_profile":
             if user_role == "student" and not requester_student_id:
                 return {"allowed": False, "reason": "Student academic profile access requires a signed student identity."}
-            if user_role == "advisor" and not requester_advisor_id:
-                return {"allowed": False, "reason": "Advisor academic profile access requires a signed advisor identity."}
+            if user_role in {"advisor", "lecturer"} and not requester_advisor_id:
+                return {"allowed": False, "reason": "Academic profile access requires a signed teaching identity."}
             requested_sections = {
                 str(value).strip()
                 for value in (arguments.get("requested_sections") or [])
@@ -176,11 +179,11 @@ def check_pdpa_policy(
             return {"allowed": True, "reason": "Academic profiles are constrained by signed role and enrollment assignment inside the PostgreSQL tool."}
 
         if query_type == "advisor_classroom":
-            if user_role != "advisor" or not requester_advisor_id:
-                return {"allowed": False, "reason": "Advisor classroom access requires a signed advisor identity."}
+            if user_role not in {"advisor", "lecturer"} or not requester_advisor_id:
+                return {"allowed": False, "reason": "Classroom access requires a signed Advisor or Lecturer teaching identity."}
             return {
                 "allowed": True,
-                "reason": "Classroom rows are constrained to student_subjects for the signed advisor and same-course academic facts.",
+                "reason": "Classroom rows are constrained to current course enrollments for the signed teaching scope.",
             }
 
         if query_type == "academic_analytics":
@@ -188,9 +191,9 @@ def check_pdpa_policy(
             dimension = str(arguments.get("dimension") or "")
             if user_role == "student" and not requester_student_id:
                 return {"allowed": False, "reason": "Student analytics require a signed student identity."}
-            if user_role == "advisor" and not requester_advisor_id:
+            if user_role in {"advisor", "lecturer"} and not requester_advisor_id:
                 return {"allowed": False, "reason": "Advisor analytics require a signed advisor identity."}
-            if user_role == "advisor" and (
+            if user_role in {"advisor", "lecturer"} and (
                 measure not in {"average_score", "pass_rate", "attendance_rate", "student_count", "score_change"}
                 or dimension not in {"course", "student", "term", "overall"}
             ):
@@ -218,15 +221,25 @@ def check_pdpa_policy(
         if query_type == "advisor_documents":
             if user_role == "student" and not requester_student_id:
                 return {"allowed": False, "reason": "Student advisor-document access requires logged-in student ID."}
-            if user_role == "advisor" and not requester_advisor_id:
-                return {"allowed": False, "reason": "Advisor document access requires logged-in advisor ID."}
+            if user_role in {"advisor", "lecturer"} and not requester_advisor_id:
+                return {"allowed": False, "reason": "Course-document access requires a signed teaching identity."}
             return {"allowed": True, "reason": "Advisor documents are filtered by role, subject, advisor, and enrollment."}
+
+        if query_type == "lecturer_documents":
+            if user_role != "lecturer" or not requester_advisor_id:
+                return {"allowed": False, "reason": "Lecturer documents require a signed Lecturer teaching identity."}
+            return {"allowed": True, "reason": "Lecturer documents are isolated by signed owner and assigned class."}
+
+        if query_type == "course_documents":
+            if user_role != "student" or not requester_student_id:
+                return {"allowed": False, "reason": "Course materials require a signed student identity."}
+            return {"allowed": True, "reason": "Course materials are filtered to the student's current enrollments."}
 
         if query_type == "advisor_subjects":
             if user_role == "student" and not requester_student_id:
                 return {"allowed": False, "reason": "Student subject access requires logged-in student ID."}
-            if user_role == "advisor" and not requester_advisor_id:
-                return {"allowed": False, "reason": "Advisor subject access requires logged-in advisor ID."}
+            if user_role in {"advisor", "lecturer"} and not requester_advisor_id:
+                return {"allowed": False, "reason": "Subject access requires a signed teaching identity."}
             return {"allowed": True, "reason": "Subject lists are filtered by role."}
 
         if query_type == "student_subjects":
@@ -260,7 +273,7 @@ def access_scope_summary(
     role = (user_role or "").lower()
     if role == "student":
         scope = "own_student_record"
-    elif role == "advisor":
+    elif role in {"advisor", "lecturer"}:
         scope = "assigned_classes_same_course_records"
     elif role == "admin":
         scope = "authorized_university_administration"
@@ -311,7 +324,7 @@ def minimize_requested_fields(
             arguments["requested_fields"] = [field for field in requested_fields if field in STUDENT_SELF_FIELDS]
         return arguments
 
-    if user_role == "advisor":
+    if user_role in {"advisor", "lecturer"}:
         arguments["requested_fields"] = list(ADVISOR_STUDENT_FIELDS)
         arguments["advisor_scope_required"] = True
         return arguments

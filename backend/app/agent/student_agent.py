@@ -113,7 +113,7 @@ def plan_as_student_agent(message: str, language: str, requester_student_id: Opt
             language,
             student_id,
             "postgres_university_tool",
-            {"query_type": "advisor_documents", "operation": op, "keyword": decision.get("search_query") or message, "preferred_source_type": _preferred_source_type(message)},
+            {"query_type": "course_documents", "operation": op, "keyword": decision.get("search_query") or message, "preferred_source_type": _preferred_source_type(message)},
             "STUDENT_ADVISOR_DOCUMENT_PROMPT",
             decision,
         )

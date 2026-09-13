@@ -29,7 +29,7 @@ ALLOWED_TOOLS = {"none", "mongodb_student_tool", "mongodb_advisor_tool", "postgr
 STUDENT_OPERATIONS = {"read_students", "count", "list_names", "grade_summary", "schema_overview"}
 ADVISOR_OPERATIONS = {"read_advisors", "list_advisors", "schema_overview"}
 POSTGRES_QUERY_TYPES = {
-    "programs", "advisor_subjects", "all_documents", "documents", "advisor_documents",
+    "programs", "advisor_subjects", "all_documents", "documents", "advisor_documents", "lecturer_documents", "course_documents",
     "tables", "database_map", "query",
 }
 POSTGRES_OPERATIONS = {"search", "normal", "list_documents", "document_search"}

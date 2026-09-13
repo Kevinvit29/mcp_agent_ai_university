@@ -53,6 +53,7 @@ def test_v30_packaging_has_explicit_safety_guards_and_ui_controls():
     assert "--replace-v28-demo" in seed_code
     assert "does not fine-tune Gemini/OpenAI" in docs
     assert "/ai/training/neural-router/run" in main
-    assert "Train AI router" in frontend
+    assert "Train AI router" not in frontend
+    assert "/ai/training/neural-router/run" not in frontend
     assert "query_academic_records" in planner
     assert r"S\d{3,6}" in planner

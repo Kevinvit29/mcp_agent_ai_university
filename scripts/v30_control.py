@@ -171,7 +171,27 @@ def _container_release_tests() -> bool:
         "exec", "-T", "backend", "python", "-m", "pytest", "-q", "tests",
         check=False,
     )
-    return test_result.returncode == 0
+    if test_result.returncode != 0:
+        return False
+    print("\nLive role/database answer gates")
+    for module in (
+        "app.agent.academic_brain_gate",
+        "app.agent.random_question_gate",
+    ):
+        gate_result = _compose(
+            "exec", "-T", "backend", "python", "-m", module,
+            check=False,
+        )
+        if gate_result.returncode != 0:
+            return False
+    print("\nSigned four-role live API matrix")
+    role_result = _compose(
+        "exec", "-T", "backend", "python", "scripts/check_roles_live.py",
+        check=False,
+    )
+    if role_result.returncode != 0:
+        return False
+    return True
 
 
 def start() -> int:
@@ -285,7 +305,7 @@ def build_parser() -> argparse.ArgumentParser:
     log_parser.add_argument("services", nargs="*", choices=EXPECTED_SERVICES)
     subparsers.add_parser("restart", help="Safely recreate containers without deleting volumes.")
     subparsers.add_parser("stop", help="Stop containers without deleting them or their volumes.")
-    subparsers.add_parser("release", help="Build V30 and run compile, regression, frontend, live, and database gates.")
+    subparsers.add_parser("release", help="Build V30 and run compile, regression, frontend, four-role, AI, and database gates.")
     subparsers.add_parser("backup", help="Create a checksummed PostgreSQL and MongoDB backup archive.")
     verify_parser = subparsers.add_parser("verify-backup", help="Verify a backup archive without changing a database.")
     verify_parser.add_argument("archive")

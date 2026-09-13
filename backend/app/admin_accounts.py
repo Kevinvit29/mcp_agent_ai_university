@@ -416,6 +416,74 @@ def reset_admin_password(*, username: str, new_password: str) -> Dict[str, Any]:
         conn.close()
 
 
+def reset_admin_password_by_id(*, target_admin_id: str, new_password: str, actor_admin_id: str) -> Dict[str, Any]:
+    """Authenticated administrator reset for another persisted admin account."""
+    validate_password(new_password)
+    if str(target_admin_id or "") == str(actor_admin_id or ""):
+        raise ValueError("Use Change password to update the account currently signed in.")
+    conn = _connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE admin_accounts
+                SET password_hash = %s, password_changed_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE admin_id = %s
+                RETURNING admin_id, username, display_name, is_active,
+                          password_changed_at, created_at, updated_at
+                """,
+                (hash_password(new_password), str(target_admin_id or "").strip()),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise ValueError("Administrator account was not found.")
+        conn.commit()
+        return _public_account(row)
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def update_admin_account(*, target_admin_id: str, username: str, display_name: str) -> Dict[str, Any]:
+    username = _normalise_username(username)
+    display_name = _normalise_username(display_name)
+    if not username or len(username) > 80:
+        raise ValueError("Administrator username must contain 1–80 characters.")
+    if not display_name or len(display_name) > 255:
+        raise ValueError("Administrator display name must contain 1–255 characters.")
+    conn = _connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM admin_accounts WHERE lower(username) = lower(%s) AND admin_id <> %s LIMIT 1",
+                (username, target_admin_id),
+            )
+            if cur.fetchone():
+                raise ValueError("An administrator with that username already exists.")
+            cur.execute(
+                """
+                UPDATE admin_accounts SET username = %s, display_name = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE admin_id = %s
+                RETURNING admin_id, username, display_name, is_active,
+                          password_changed_at, created_at, updated_at
+                """,
+                (username, display_name, str(target_admin_id or "").strip()),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise ValueError("Administrator account was not found.")
+        conn.commit()
+        return _public_account(row)
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def set_admin_active(*, target_admin_id: str, active: bool, actor_admin_id: str) -> Dict[str, Any]:
     if str(target_admin_id) == str(actor_admin_id) and not active:
         raise ValueError("You cannot disable the administrator account currently signed in.")

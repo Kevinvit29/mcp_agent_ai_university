@@ -54,8 +54,10 @@ def seed_mongo(dataset: Dict[str, Any]) -> Dict[str, int]:
         db = client[db_name]
         students = dataset["students"]
         advisors = dataset["advisors"]
+        lecturers = dataset["lecturers"]
         student_ids = [row["student_id"] for row in students]
         advisor_ids = [row["advisor_id"] for row in advisors]
+        lecturer_ids = [row["lecturer_id"] for row in lecturers]
 
         # Remove only prior V29/V30 *synthetic* rows that are outside the
         # requested deterministic demo range. Untagged or real data is never
@@ -68,10 +70,16 @@ def seed_mongo(dataset: Dict[str, Any]) -> Dict[str, int]:
             "data_origin": {"$in": list(LEGACY_DEMO_ORIGINS)},
             "advisor_id": {"$nin": advisor_ids},
         })
+        db.lecturers.delete_many({
+            "data_origin": {"$in": list(LEGACY_DEMO_ORIGINS)},
+            "lecturer_id": {"$nin": lecturer_ids},
+        })
         for group in _chunks(students):
             db.students.bulk_write([ReplaceOne({"student_id": row["student_id"]}, row, upsert=True) for row in group], ordered=False)
         for group in _chunks(advisors):
             db.advisors.bulk_write([ReplaceOne({"advisor_id": row["advisor_id"]}, row, upsert=True) for row in group], ordered=False)
+        for group in _chunks(lecturers):
+            db.lecturers.bulk_write([ReplaceOne({"lecturer_id": row["lecturer_id"]}, row, upsert=True) for row in group], ordered=False)
 
         db.students.create_index("student_id", unique=True)
         db.students.create_index("name")
@@ -85,6 +93,9 @@ def seed_mongo(dataset: Dict[str, Any]) -> Dict[str, int]:
         db.students.create_index("subject_grades.advisor_id")
         db.advisors.create_index("advisor_id", unique=True)
         db.advisors.create_index("department")
+        db.lecturers.create_index("lecturer_id", unique=True)
+        db.lecturers.create_index("advisor_scope_id", unique=True)
+        db.lecturers.create_index("department")
         db.system_metadata.update_one(
             {"key": "synthetic_dataset_v30"},
             {"$set": {
@@ -92,11 +103,12 @@ def seed_mongo(dataset: Dict[str, Any]) -> Dict[str, int]:
                 "data_origin": DATA_ORIGIN,
                 "student_count": len(students),
                 "advisor_count": len(advisors),
+                "lecturer_count": len(lecturers),
                 "notice": "All identities in this dataset are synthetic and for local testing only.",
             }},
             upsert=True,
         )
-        return {"students": len(students), "advisors": len(advisors)}
+        return {"students": len(students), "advisors": len(advisors), "lecturers": len(lecturers)}
     finally:
         client.close()
 
@@ -274,6 +286,17 @@ def seed_postgres(dataset: Dict[str, Any]) -> Dict[str, int]:
             for row in dataset["enrollments"]:
                 advisor_subject_rows.append((row["advisor_id"], row["course_code"], row["course_name"]))
                 student_subject_rows.append((row["student_id"], row["advisor_id"], row["course_code"], row["course_name"]))
+            # These legacy compatibility tables have no data_origin column.
+            # Rebuild only the deterministic demo-ID slice so stale V28/V29
+            # course links cannot survive as document/class permissions.
+            cur.execute(
+                "DELETE FROM student_subjects WHERE student_id = ANY(%s)",
+                ([row["student_id"] for row in dataset["students"]],),
+            )
+            cur.execute(
+                "DELETE FROM advisor_subjects WHERE advisor_id = ANY(%s)",
+                ([row["advisor_id"] for row in dataset["advisors"]],),
+            )
             _execute_many(cur, """
                 INSERT INTO advisor_subjects(advisor_id, subject_code, subject_name)
                 VALUES (%s, %s, %s)

@@ -60,6 +60,7 @@ class ToolCall(BaseModel):
     user_role: Optional[str] = None
     requester_student_id: Optional[str] = None
     requester_advisor_id: Optional[str] = None
+    requester_lecturer_id: Optional[str] = None
     language: Optional[str] = "en"
 
 
@@ -92,6 +93,7 @@ def call_tool(tool_call: ToolCall):
     user_role = (tool_call.user_role or "").lower()
     requester_student_id = tool_call.requester_student_id
     requester_advisor_id = tool_call.requester_advisor_id
+    requester_lecturer_id = tool_call.requester_lecturer_id
 
     if tool_name not in AVAILABLE_TOOLS:
         raise HTTPException(status_code=400, detail=f"Unknown tool: {tool_name}")
@@ -122,12 +124,14 @@ def call_tool(tool_call: ToolCall):
     safe_arguments["_user_role"] = user_role
     safe_arguments["_requester_student_id"] = requester_student_id
     safe_arguments["_requester_advisor_id"] = requester_advisor_id
+    safe_arguments["_requester_lecturer_id"] = requester_lecturer_id
 
     try:
         context = {
         "user_role": user_role,
         "requester_student_id": requester_student_id,
         "requester_advisor_id": requester_advisor_id,
+        "requester_lecturer_id": requester_lecturer_id,
         "language": tool_call.language,
         "mongo_db": mongo_db,
         }

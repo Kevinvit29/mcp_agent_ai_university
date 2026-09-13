@@ -48,6 +48,7 @@ from app.routers.health import create_health_router
 from app.roles.admin.router import create_admin_router
 from app.roles.advisor.router import create_advisor_router
 from app.roles.student.router import router as student_router
+from app.roles.lecturer.router import create_lecturer_router
 from app.production_security import (
     SecurityError, SlidingWindowRateLimiter, apply_identity_to_model,
     bearer_token_from_headers, get_client_ip, is_public_path, production_configuration_errors,
@@ -270,6 +271,10 @@ def startup_event():
     if configuration_errors:
         raise RuntimeError("Production configuration is incomplete: " + "; ".join(configuration_errors))
     init_postgres_tables()
+    from app.roles.admin.master_import_service import recover_incomplete_imports
+    import_recovery = recover_incomplete_imports()
+    if import_recovery.get("recovered"):
+        print(f"Recovered {len(import_recovery['recovered'])} interrupted master-data import batch(es).")
     # V30 creates an initial PostgreSQL administrator only when the account
     # table is empty. Later sign-ins never read ADMIN_PASSWORD from .env.
     bootstrap_result = bootstrap_admin_account()
@@ -1029,12 +1034,17 @@ def _build_pinned_document_plan(request: ChatRequest) -> Dict[str, Any]:
     scope = (request.document_scope or "").lower().strip()
     # Admin may open either admin/global or advisor files. Advisor/student interfaces
     # only expose advisor-scope documents they are allowed to read.
-    query_type = "all_documents" if role == "admin" else "advisor_documents"
+    query_type = {
+        "admin": "all_documents",
+        "advisor": "advisor_documents",
+        "lecturer": "lecturer_documents",
+        "student": "course_documents",
+    }.get(role, "course_documents")
     if role == "admin" and scope == "admin":
         query_type = "documents"
     return {
         "selected_agent": f"{role}_pinned_knowledge_agent",
-        "role_prompt_name": "ADMIN_DOCUMENT_AGENT_PROMPT" if role == "admin" else ("ADVISOR_DOCUMENT_AGENT_PROMPT" if role == "advisor" else "STUDENT_ADVISOR_DOCUMENT_PROMPT"),
+        "role_prompt_name": "ADMIN_DOCUMENT_AGENT_PROMPT" if role == "admin" else ("ADVISOR_DOCUMENT_AGENT_PROMPT" if role == "advisor" else ("LECTURER_DOCUMENT_AGENT_PROMPT" if role == "lecturer" else "STUDENT_ADVISOR_DOCUMENT_PROMPT")),
         "tool_name": "postgres_university_tool",
         "arguments": {
             "query_type": query_type,
@@ -1048,6 +1058,7 @@ def _build_pinned_document_plan(request: ChatRequest) -> Dict[str, Any]:
         "user_role": role,
         "requester_student_id": request.requester_student_id,
         "requester_advisor_id": request.requester_advisor_id,
+        "requester_lecturer_id": request.requester_lecturer_id,
         "language": request.language,
         "orchestrator": {"version": "v22", "mode": "persistent_pinned_document_context"},
         "purpose_analysis": {
@@ -1074,7 +1085,7 @@ def _learning_identity(user_role: str, requester_student_id: Optional[str], requ
     role = (user_role or "student").lower()
     if role == "student":
         return requester_student_id or "unknown_student"
-    if role == "advisor":
+    if role in {"advisor", "lecturer"}:
         return requester_advisor_id or "unknown_advisor"
     return "ADMIN" if role == "admin" else "unknown"
 
@@ -1333,6 +1344,10 @@ def _chat_impl(request: ChatRequest):
             chat_history=previous_history,
             fallback_router=route_to_role_agent,
         )
+    # The Lecturer's Lxxx owner ID is signed independently from the Axxx teaching
+    # scope. Keep both claims on the internal MCP request so file ownership cannot
+    # be inferred from browser input or conflated with Advisor ownership.
+    plan["requester_lecturer_id"] = request.requester_lecturer_id
     plan["routing_policy"] = {
         "version": "v30_authoritative",
         "latest_message_wins": True,
@@ -1458,7 +1473,7 @@ def ai_learning_memories(
     role = (user_role or "admin").lower()
     if role == "student":
         identifier = requester_student_id or "unknown_student"
-    elif role == "advisor":
+    elif role in {"advisor", "lecturer"}:
         identifier = requester_advisor_id or "unknown_advisor"
     else:
         identifier = "ADMIN"
@@ -1476,7 +1491,7 @@ def delete_ai_learning_memory(
     role = (user_role or "admin").lower()
     if role == "student":
         identifier = requester_student_id or "unknown_student"
-    elif role == "advisor":
+    elif role in {"advisor", "lecturer"}:
         identifier = requester_advisor_id or "unknown_advisor"
     else:
         identifier = "ADMIN"
@@ -1497,7 +1512,7 @@ def submit_answer_feedback(request: AnswerFeedbackRequest, http_request: Request
     if not rating:
         raise HTTPException(status_code=422, detail="rating must be 'helpful' or 'needs_review'.")
     role = (request.user_role or "student").lower()
-    if role not in {"student", "advisor", "admin"}:
+    if role not in {"student", "advisor", "lecturer", "admin"}:
         raise HTTPException(status_code=422, detail="Unsupported user role.")
     question = safe_feedback_text(request.question, 1200)
     answer_excerpt = safe_feedback_text(request.answer_excerpt, 1600)
@@ -2556,6 +2571,7 @@ def process_knowledge_file(file_bytes: bytes, filename: str, storage_target: str
 
 app.include_router(create_admin_router(process_knowledge_file))
 app.include_router(create_advisor_router(process_knowledge_file))
+app.include_router(create_lecturer_router(process_knowledge_file))
 app.include_router(student_router)
 
 
@@ -2564,6 +2580,7 @@ def get_ai_data_agents(
     user_role: str = "admin",
     requester_student_id: Optional[str] = None,
     requester_advisor_id: Optional[str] = None,
+    requester_lecturer_id: Optional[str] = None,
 ):
     """List the cloned data agents created for uploaded PDF/Excel/CSV files."""
     return {
@@ -2572,6 +2589,7 @@ def get_ai_data_agents(
             user_role=user_role,
             requester_student_id=requester_student_id,
             requester_advisor_id=requester_advisor_id,
+            requester_lecturer_id=requester_lecturer_id,
             limit=100,
         ),
     }
@@ -2583,6 +2601,7 @@ def search_ai_data_agents(
     user_role: str = "admin",
     requester_student_id: Optional[str] = None,
     requester_advisor_id: Optional[str] = None,
+    requester_lecturer_id: Optional[str] = None,
 ):
     """Semantic search over cloned PDF/Excel/CSV table agents."""
     return search_data_agent_chunks(
@@ -2590,6 +2609,7 @@ def search_ai_data_agents(
         user_role=user_role,
         requester_student_id=requester_student_id,
         requester_advisor_id=requester_advisor_id,
+        requester_lecturer_id=requester_lecturer_id,
         limit=30,
     )
 

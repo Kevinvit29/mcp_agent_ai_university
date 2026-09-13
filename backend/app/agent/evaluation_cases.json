@@ -1,5 +1,5 @@
 {
-  "version": "V30_AUTHORITATIVE_CHAT_BENCHMARK_1",
+  "version": "V30_AUTHORITATIVE_CHAT_BENCHMARK_2",
   "description": "Synthetic, deterministic query-understanding cases. These cases never contain or fetch real student data.",
   "parser_cases": [
     {
@@ -127,6 +127,18 @@
       "parser": "student_metric",
       "message": "students with GPA at most 2.5",
       "expected": {"operator": "$lte", "value": 2.5, "intent": "list"}
+    },
+    {
+      "case_id": "gpa_exact_screenshot_wording",
+      "category": "gpa_filter",
+      "parser": "student_metric",
+      "message": "how many student get gpa 4.00",
+      "expected": {
+        "operator": "$eq",
+        "value": 4.0,
+        "intent": "count",
+        "query_filter": {"gpa": {"$eq": 4.0}}
+      }
     },
     {
       "case_id": "recommended_subject_rank",
@@ -266,6 +278,76 @@
       "parser": "database_analytics",
       "message": "what course should S001 take next",
       "expected": {"type": "capability_limitation", "reason": "unsupported_prerequisites"}
+    },
+    {
+      "case_id": "random_exact_gpa_reordered",
+      "category": "random_paraphrase",
+      "parser": "student_metric",
+      "message": "how many got exactly 4 gpa",
+      "expected": {"operator": "$eq", "value": 4.0, "intent": "count"}
+    },
+    {
+      "case_id": "random_law_plural_major_median",
+      "category": "random_paraphrase",
+      "parser": "student_statistic",
+      "message": "median GPA for law majors",
+      "expected": {"operation": "study_term_aggregate", "statistic": "median", "study_term": "law"}
+    },
+    {
+      "case_id": "random_program_best_average_gpa",
+      "category": "random_paraphrase",
+      "parser": "database_analytics",
+      "message": "which major performs best by average gpa",
+      "expected": {"type": "database_analytics", "source": "mongo", "dimension": "program", "measure": "average_gpa"}
+    },
+    {
+      "case_id": "random_course_mean_score_rank",
+      "category": "random_paraphrase",
+      "parser": "database_analytics",
+      "message": "rank all courses based on mean score",
+      "expected": {"type": "database_analytics", "source": "postgres", "dimension": "course", "measure": "average_score"}
+    },
+    {
+      "case_id": "random_midterm_result_wording",
+      "category": "random_paraphrase",
+      "parser": "academic_query",
+      "message": "midterm result for S001",
+      "expected": {"query_type": "student_academic_profile", "answer_style": "assessments", "requested_sections": ["assessments"]}
+    },
+    {
+      "case_id": "random_attendance_typo_student",
+      "category": "typo_tolerance",
+      "parser": "academic_query",
+      "message": "show my attandance",
+      "expected": {"query_type": "student_academic_profile", "answer_style": "attendance", "is_self_request": true}
+    },
+    {
+      "case_id": "random_future_gpa_boundary",
+      "category": "capability_boundary",
+      "parser": "database_analytics",
+      "message": "what will S001 GPA be next semester",
+      "expected": {"type": "capability_limitation", "reason": "unsupported_prediction"}
+    },
+    {
+      "case_id": "random_student_enrolled_class_list",
+      "category": "random_paraphrase",
+      "parser": "student_own_course",
+      "message": "which classes am I enrolled in",
+      "expected": {"type": "student_own_course", "operation": "list_subjects", "answer_style": "student_course_list"}
+    },
+    {
+      "case_id": "random_advisor_attendance_typo",
+      "category": "typo_tolerance",
+      "parser": "advisor_classroom",
+      "message": "attandance of S001",
+      "expected": {"type": "advisor_classroom", "operation": "class_records", "student_ids": ["S001"], "requested_metrics": ["attendance"]}
+    },
+    {
+      "case_id": "random_total_students_thai_alt",
+      "category": "thai_paraphrase",
+      "parser": "total_student_count",
+      "message": "มหาวิทยาลัยมีนักศึกษาทั้งหมดกี่คน",
+      "expected": {"operation": "count", "scope": "university"}
     }
   ],
   "contract_cases": [
@@ -338,6 +420,19 @@
         "arguments.answer_style": "student_rank",
         "arguments.top_n": 5,
         "arguments.sort": [{"field": "gpa", "direction": "asc"}]
+      }
+    },
+    {
+      "case_id": "v30_exact_gpa_count_filter",
+      "category": "authoritative_planner",
+      "message": "how many student get gpa 4.00",
+      "expected": {
+        "tool_name": "mongodb_student_tool",
+        "arguments.operation": "filter_summary",
+        "arguments.answer_style": "aggregate_count",
+        "arguments.query_filter": {"gpa": {"$eq": 4.0}},
+        "arguments.metric_query.operator": "$eq",
+        "arguments.metric_query.value": 4.0
       }
     },
     {
@@ -642,6 +737,235 @@
         "arguments.operation": "course_membership",
         "arguments.course_query": "Business English",
         "arguments.answer_style": "student_course_membership"
+      }
+    },
+    {
+      "case_id": "v30_random_midterm_result",
+      "category": "random_question_planner",
+      "message": "midterm result for S001",
+      "expected": {
+        "tool_name": "postgres_university_tool",
+        "arguments.query_type": "student_academic_profile",
+        "arguments.operation": "read",
+        "arguments.answer_style": "assessments",
+        "arguments.requested_sections": ["assessments"]
+      }
+    },
+    {
+      "case_id": "v30_random_law_major_median",
+      "category": "random_question_planner",
+      "message": "median GPA for law majors",
+      "expected": {
+        "tool_name": "mongodb_student_tool",
+        "arguments.operation": "study_term_aggregate",
+        "arguments.study_term": "law",
+        "arguments.statistic": "median"
+      }
+    },
+    {
+      "case_id": "v30_random_future_gpa_boundary",
+      "category": "random_question_planner",
+      "message": "what will S001 GPA be next semester",
+      "expected": {
+        "tool_name": "none",
+        "arguments.reason": "unsupported_prediction",
+        "arguments.answer_style": "capability_limitation"
+      }
+    },
+    {
+      "case_id": "v30_random_program_best_gpa",
+      "category": "random_question_planner",
+      "message": "which major performs best by average gpa",
+      "expected": {
+        "tool_name": "mongodb_student_tool",
+        "arguments.operation": "group_students",
+        "arguments.dimension": "program",
+        "arguments.measure": "average_gpa"
+      }
+    },
+    {
+      "case_id": "v30_random_course_mean_score",
+      "category": "random_question_planner",
+      "message": "rank all courses based on mean score",
+      "expected": {
+        "tool_name": "postgres_university_tool",
+        "arguments.query_type": "academic_analytics",
+        "arguments.operation": "group_rank",
+        "arguments.dimension": "course",
+        "arguments.measure": "average_score"
+      }
+    },
+    {
+      "case_id": "v30_random_student_enrolled_classes",
+      "category": "student_own_scope_planner",
+      "role": "student",
+      "requester_student_id": "S001",
+      "message": "which classes am I enrolled in",
+      "expected": {
+        "tool_name": "postgres_university_tool",
+        "arguments.query_type": "student_subjects",
+        "arguments.operation": "list_subjects",
+        "arguments.student_id": "S001"
+      }
+    },
+    {
+      "case_id": "v30_random_student_attendance_typo",
+      "category": "student_own_scope_planner",
+      "role": "student",
+      "requester_student_id": "S001",
+      "message": "show my attandance",
+      "expected": {
+        "tool_name": "postgres_university_tool",
+        "arguments.query_type": "student_academic_profile",
+        "arguments.operation": "read",
+        "arguments.answer_style": "attendance"
+      }
+    },
+    {
+      "case_id": "v30_random_student_everyone_denied",
+      "category": "student_own_scope_planner",
+      "role": "student",
+      "requester_student_id": "S001",
+      "message": "list everyone",
+      "expected": {
+        "tool_name": "none",
+        "arguments.reason": "student_own_scope_only",
+        "arguments.answer_style": "student_scope"
+      }
+    },
+    {
+      "case_id": "v30_random_student_thai_grades",
+      "category": "student_own_scope_planner",
+      "role": "student",
+      "requester_student_id": "S001",
+      "message": "เกรดของฉัน",
+      "expected": {
+        "tool_name": "mongodb_student_tool",
+        "arguments.operation": "read_students",
+        "arguments.student_id": "S001",
+        "arguments.answer_style": "grades"
+      }
+    },
+    {
+      "case_id": "v30_random_advisor_attendance_typo",
+      "category": "advisor_classroom_planner",
+      "role": "advisor",
+      "requester_advisor_id": "A001",
+      "message": "attandance of S001",
+      "expected": {
+        "tool_name": "postgres_university_tool",
+        "arguments.query_type": "advisor_classroom",
+        "arguments.operation": "class_records",
+        "arguments.student_ids": ["S001"],
+        "arguments.requested_metrics": ["attendance"]
+      }
+    },
+    {
+      "case_id": "v30_random_admin_thai_attendance",
+      "category": "thai_question_planner",
+      "message": "ดูข้อมูลการเข้าเรียน S001",
+      "expected": {
+        "tool_name": "postgres_university_tool",
+        "arguments.query_type": "student_academic_profile",
+        "arguments.operation": "read",
+        "arguments.answer_style": "attendance"
+      }
+    }
+  ],
+  "conversation_cases": [
+    {
+      "case_id": "v30_followup_compare_previous_tuition",
+      "category": "conversation_followup",
+      "message": "compare that with S002",
+      "history": [
+        {"role": "user", "content": "show S001 tuition balance"},
+        {"role": "assistant", "content": "Financial account for S001"}
+      ],
+      "expected": {
+        "tool_name": "postgres_university_tool",
+        "arguments.query_type": "student_academic_profile",
+        "arguments.student_ids": ["S001", "S002"],
+        "arguments.requested_sections": ["financial_accounts"]
+      }
+    },
+    {
+      "case_id": "v30_followup_and_attendance",
+      "category": "conversation_followup",
+      "message": "and attendance?",
+      "history": [
+        {"role": "user", "content": "show S001 profile"},
+        {"role": "assistant", "content": "Student profile for S001"}
+      ],
+      "expected": {
+        "tool_name": "postgres_university_tool",
+        "arguments.query_type": "student_academic_profile",
+        "arguments.student_id": "S001",
+        "arguments.requested_sections": ["attendance"]
+      }
+    },
+    {
+      "case_id": "v30_followup_thai_attendance",
+      "category": "conversation_followup",
+      "language": "th",
+      "message": "แล้วการเข้าเรียนล่ะ",
+      "history": [
+        {"role": "user", "content": "ดูโปรไฟล์ S001"},
+        {"role": "assistant", "content": "ข้อมูลนักศึกษา S001"}
+      ],
+      "expected": {
+        "tool_name": "postgres_university_tool",
+        "arguments.query_type": "student_academic_profile",
+        "arguments.student_id": "S001",
+        "arguments.requested_sections": ["attendance"]
+      }
+    },
+    {
+      "case_id": "v30_followup_student_other_denied",
+      "category": "conversation_role_boundary",
+      "role": "student",
+      "requester_student_id": "S001",
+      "message": "what about S002?",
+      "history": [
+        {"role": "user", "content": "show my profile"},
+        {"role": "assistant", "content": "Student profile for S001"}
+      ],
+      "expected": {
+        "tool_name": "none",
+        "arguments.reason": "student_other_record_denied"
+      }
+    },
+    {
+      "case_id": "v30_followup_student_everyone_denied",
+      "category": "conversation_role_boundary",
+      "role": "student",
+      "requester_student_id": "S001",
+      "message": "list everyone",
+      "history": [
+        {"role": "user", "content": "show my attendance"},
+        {"role": "assistant", "content": "Attendance for S001"}
+      ],
+      "expected": {
+        "tool_name": "none",
+        "arguments.reason": "student_own_scope_only",
+        "arguments.answer_style": "student_scope"
+      }
+    },
+    {
+      "case_id": "v30_followup_advisor_attendance",
+      "category": "conversation_role_boundary",
+      "role": "advisor",
+      "requester_advisor_id": "A001",
+      "message": "and attendance?",
+      "history": [
+        {"role": "user", "content": "show S001 grade"},
+        {"role": "assistant", "content": "Class grade for S001"}
+      ],
+      "expected": {
+        "tool_name": "postgres_university_tool",
+        "arguments.query_type": "advisor_classroom",
+        "arguments.operation": "class_records",
+        "arguments.student_ids": ["S001"],
+        "arguments.requested_metrics": ["attendance"]
       }
     }
   ]

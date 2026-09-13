@@ -1,10 +1,40 @@
-# Deployment Runbook
+# V30 Deployment Runbook
 
-Use this runbook with `docs/V28_PRODUCTION_HARDENING.md`.
+## Supported commands
 
-- **Normal start:** `docker compose up -d --build`; verify `docker compose ps` and `/api/health/ready` through the frontend proxy.
-- **Normal stop:** `docker compose down` keeps data volumes. Never use `docker compose down -v` unless a documented recovery procedure authorizes deletion of all persistent data.
-- **Safe logs:** `docker compose logs --tail=200 backend` or `mcp_server`. Treat logs as sensitive operational data.
-- **Token expiry:** users sign in again; the default token lifetime is eight hours and can be adjusted with `ACCESS_TOKEN_TTL_SECONDS` (5 minutes–24 hours).
-- **Scale-out:** the built-in rate limiter is per backend container. Use an edge/WAF or shared Redis limiter before running more than one backend replica.
-- **Privacy:** students and advisors use signed claims; MCP remains the final PDPA/data-field guard. Never bypass the MCP gateway with direct database access from the LLM.
+Run commands from the project root:
+
+```bash
+python3 scripts/v30_control.py release
+python3 scripts/v30_control.py check
+python3 scripts/v30_control.py logs backend
+python3 scripts/v30_control.py backup
+python3 scripts/v30_control.py stop
+```
+
+`release` is the single build-and-validation path. It builds the locked backend,
+frontend, and database-agent images; starts the five services without deleting
+volumes; and runs regression, live-answer, role-security, and database checks.
+
+If the persisted Administrator password differs from `.env`, provide it only to
+the release process:
+
+```bash
+V30_RELEASE_ADMIN_PASSWORD='current-password' python3 scripts/v30_control.py release
+```
+
+Never commit that value. Never use `docker compose down -v` during normal
+operations because it deletes persistent university data.
+
+## Before public deployment
+
+- Set unique production secrets and `ALLOW_LEGACY_DEMO_PASSWORDS=false`.
+- Put the frontend behind HTTPS and an edge/WAF; set explicit CORS origins.
+- Store backups outside the Docker host and verify each archive.
+- Restore the newest archive into an isolated deployment and run `check`.
+- Configure uptime/error alerts, log rotation, rate limits, and PDPA retention.
+- Treat logs, backups, audit records, and uploaded documents as sensitive data.
+
+Signed session claims define Student, Advisor, Lecturer, and Administrator
+scope. The browser cannot expand that scope, and the MCP gateway remains the
+final database-field policy boundary.

@@ -11,7 +11,7 @@ def _is_thai(language: str, message: str = "") -> bool:
 def _source_name(plan: Dict[str, Any], thai: bool) -> str:
     tool = str((plan or {}).get("tool_name") or "")
     args = (plan or {}).get("arguments") or {}
-    if tool == "postgres_university_tool" and (args.get("pinned_document") or args.get("query_type") in {"documents", "all_documents", "advisor_documents"}):
+    if tool == "postgres_university_tool" and (args.get("pinned_document") or args.get("query_type") in {"documents", "all_documents", "advisor_documents", "lecturer_documents", "course_documents"}):
         return "ไฟล์ที่เลือก" if thai else "the selected file"
     if tool == "mongodb_student_tool":
         return "ข้อมูลนักศึกษา" if thai else "student records"

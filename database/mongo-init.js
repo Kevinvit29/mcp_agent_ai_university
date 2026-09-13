@@ -19,8 +19,10 @@ db.students.createIndex({ attendance_rate: 1 });
 db.students.createIndex({ "subject_grades.course_code": 1 });
 db.students.createIndex({ "subject_grades.advisor_id": 1 });
 db.students.createIndex({ data_origin: 1 });
+db.students.createIndex({ is_active: 1 });
 db.advisors.createIndex({ advisor_id: 1 }, { unique: true });
 db.advisors.createIndex({ department: 1 });
+db.advisors.createIndex({ is_active: 1 });
 db.system_metadata.createIndex({ key: 1 }, { unique: true });
 
 print("V30 MongoDB initialized without sample rows. Backend bootstrap owns the verified demo seed.");

@@ -39,7 +39,7 @@ SOURCE_OF_TRUTH = {
         "never_use_for": ["student enrolment count unless explicitly synchronized"],
     },
     "documents": {
-        "source": "PostgreSQL admin_documents + advisor_documents",
+        "source": "PostgreSQL admin_documents + advisor_documents + lecturer_documents",
         "authority": "document_knowledge_base",
         "use_for": ["uploaded PDF/Excel/CSV content"],
         "never_use_for": ["student master count"],

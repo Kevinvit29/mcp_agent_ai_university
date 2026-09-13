@@ -25,8 +25,10 @@ ENROLLMENT_WORDS = {
     "รายวิชาที่ลง", "ภาคเรียน", "เทอม",
 }
 ASSESSMENT_WORDS = {
-    "assessment result", "assessment results", "quiz score", "midterm score",
-    "final exam score", "project score", "ผลการประเมิน", "คะแนนควิซ",
+    "assessment result", "assessment results", "quiz score", "quiz result",
+    "midterm score", "midterm result", "midterm results", "exam result",
+    "exam results", "final result", "final exam score", "project score",
+    "ผลการประเมิน", "คะแนนควิซ",
     "คะแนนกลางภาค", "คะแนนปลายภาค",
 }
 FINANCE_WORDS = {

@@ -43,7 +43,7 @@ def _iso_row(row: Dict[str, Any]) -> Dict[str, Any]:
     return row
 
 
-def _fetch_excel_uploads_for_role(cur, user_role: str, requester_student_id: str | None, requester_advisor_id: str | None) -> Tuple[List[Dict[str, Any]], str | None]:
+def _fetch_excel_uploads_for_role(cur, user_role: str, requester_student_id: str | None, requester_advisor_id: str | None, requester_lecturer_id: str | None = None) -> Tuple[List[Dict[str, Any]], str | None]:
     if user_role == "admin":
         cur.execute(
             """
@@ -59,9 +59,32 @@ def _fetch_excel_uploads_for_role(cur, user_role: str, requester_student_id: str
                    'advisor' AS document_scope, advisor_id, subject_code, subject_name
             FROM advisor_documents
             WHERE source_type = 'excel'
+            UNION ALL
+            SELECT id, filename, uploaded_by, summary, conclusion_table, structured_data,
+                   source_type, storage_target, cloned_agent_name, created_at,
+                   'lecturer' AS document_scope, NULL::VARCHAR AS advisor_id, subject_code, subject_name
+            FROM lecturer_documents
+            WHERE source_type = 'excel'
             ORDER BY created_at DESC
-            LIMIT 80;
+            LIMIT 120;
             """
+        )
+        return cur.fetchall(), None
+
+    if user_role == "lecturer":
+        if not requester_advisor_id or not requester_lecturer_id:
+            return [], "Lecturer Excel access requires a signed Lecturer identity."
+        cur.execute(
+            """
+            SELECT id, filename, uploaded_by, summary, conclusion_table, structured_data,
+                   source_type, storage_target, cloned_agent_name, created_at,
+                   'lecturer' AS document_scope, NULL::VARCHAR AS advisor_id, subject_code, subject_name
+            FROM lecturer_documents
+            WHERE source_type = 'excel' AND lecturer_id = %s AND teaching_scope_id = %s
+            ORDER BY created_at DESC
+            LIMIT 80
+            """,
+            (requester_lecturer_id, requester_advisor_id),
         )
         return cur.fetchall(), None
 
@@ -91,17 +114,37 @@ def _fetch_excel_uploads_for_role(cur, user_role: str, requester_student_id: str
                    d.source_type, d.storage_target, d.cloned_agent_name, d.created_at,
                    'advisor' AS document_scope, d.advisor_id, d.subject_code, d.subject_name
             FROM advisor_documents d
-            JOIN student_subjects ss
-              ON ss.student_id = %s
-             AND ss.advisor_id = d.advisor_id
-             AND ss.subject_code = d.subject_code
             WHERE d.source_type = 'excel'
+              AND EXISTS (
+                SELECT 1 FROM student_course_enrollments e
+                WHERE e.student_id = %s
+                  AND e.advisor_id = d.advisor_id
+                  AND e.course_code = d.subject_code
+              )
             ORDER BY d.created_at DESC
             LIMIT 80;
             """,
             (requester_student_id,),
         )
-        return cur.fetchall(), None
+        advisor_rows = cur.fetchall()
+        cur.execute(
+            """
+            SELECT d.id, d.filename, d.uploaded_by, d.summary, d.conclusion_table, d.structured_data,
+                   d.source_type, d.storage_target, d.cloned_agent_name, d.created_at,
+                   'lecturer' AS document_scope, NULL::VARCHAR AS advisor_id, d.subject_code, d.subject_name
+            FROM lecturer_documents d
+            WHERE d.source_type = 'excel'
+              AND EXISTS (
+                SELECT 1 FROM student_course_enrollments e
+                WHERE e.student_id = %s AND e.advisor_id = d.teaching_scope_id
+                  AND e.course_code = d.subject_code
+              )
+            ORDER BY d.created_at DESC
+            LIMIT 80
+            """,
+            (requester_student_id,),
+        )
+        return list(advisor_rows) + list(cur.fetchall()), None
 
     return [], "Unknown role. Access denied."
 
@@ -127,12 +170,13 @@ def excel_tool(arguments: Dict[str, Any], context: Dict[str, Any] | None = None)
     user_role = (arguments.get("_user_role") or (context or {}).get("user_role") or "").lower()
     requester_student_id = arguments.get("_requester_student_id") or (context or {}).get("requester_student_id")
     requester_advisor_id = arguments.get("_requester_advisor_id") or (context or {}).get("requester_advisor_id")
+    requester_lecturer_id = arguments.get("_requester_lecturer_id") or (context or {}).get("requester_lecturer_id")
 
     if operation in {"list_uploaded_excel", "search_uploaded_excel", "document_search", "list_documents"}:
         conn = _pg_connection()
         try:
             with conn.cursor() as cur:
-                rows, error = _fetch_excel_uploads_for_role(cur, user_role, requester_student_id, requester_advisor_id)
+                rows, error = _fetch_excel_uploads_for_role(cur, user_role, requester_student_id, requester_advisor_id, requester_lecturer_id)
                 if error:
                     return {"success": False, "error": error}
                 if keyword:

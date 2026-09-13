@@ -2,6 +2,7 @@ from typing import Optional, Dict, Any, List
 from app.agent.student_agent import plan_as_student_agent
 from app.agent.advisor_agent import plan_as_advisor_agent
 from app.agent.admin_agent import plan_as_admin_agent
+from app.agent.lecturer_agent import plan_as_lecturer_agent
 
 
 def route_to_role_agent(
@@ -19,6 +20,9 @@ def route_to_role_agent(
 
     if role == "advisor":
         return plan_as_advisor_agent(message, language, requester_advisor_id, chat_history)
+
+    if role == "lecturer":
+        return plan_as_lecturer_agent(message, language, requester_advisor_id, chat_history)
 
     if role == "admin":
         return plan_as_admin_agent(message, language, chat_history)

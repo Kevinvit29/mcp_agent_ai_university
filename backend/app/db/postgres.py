@@ -26,6 +26,11 @@ ADVISOR_DOCUMENT_COLUMNS_PUBLIC = """
     extraction_method, detected_language, source_type, storage_target, cloned_agent_name,
     structured_data, mongo_object_id, created_at
 """
+LECTURER_DOCUMENT_COLUMNS_PUBLIC = """
+    id, lecturer_id, teaching_scope_id, subject_code, subject_name, filename, uploaded_by,
+    summary, conclusion_table, extraction_method, detected_language, source_type, storage_target,
+    cloned_agent_name, structured_data, mongo_object_id, created_at
+"""
 
 
 def get_connection():
@@ -169,12 +174,38 @@ def init_postgres_tables() -> None:
                 ALTER TABLE advisor_documents
                     ADD COLUMN IF NOT EXISTS mongo_object_id VARCHAR(80);
 
+                CREATE TABLE IF NOT EXISTS lecturer_documents (
+                    id SERIAL PRIMARY KEY,
+                    lecturer_id VARCHAR(20) NOT NULL,
+                    teaching_scope_id VARCHAR(20) NOT NULL,
+                    subject_code VARCHAR(50) NOT NULL,
+                    subject_name VARCHAR(255) NOT NULL,
+                    filename VARCHAR(255) NOT NULL,
+                    uploaded_by VARCHAR(80) DEFAULT 'LECTURER',
+                    summary TEXT NOT NULL,
+                    conclusion_table JSONB DEFAULT '{}'::jsonb,
+                    text_preview TEXT,
+                    full_text TEXT,
+                    extraction_method VARCHAR(80),
+                    detected_language VARCHAR(30),
+                    source_type VARCHAR(30) DEFAULT 'pdf',
+                    storage_target VARCHAR(30) DEFAULT 'postgres',
+                    cloned_agent_name VARCHAR(80),
+                    structured_data JSONB DEFAULT '{}'::jsonb,
+                    mongo_object_id VARCHAR(80),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_admin_documents_source_target
                     ON admin_documents(source_type, storage_target, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_advisor_documents_owner_subject
                     ON advisor_documents(advisor_id, subject_code, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_advisor_documents_source_target
                     ON advisor_documents(source_type, storage_target, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_lecturer_documents_owner_subject
+                    ON lecturer_documents(lecturer_id, teaching_scope_id, subject_code, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_lecturer_documents_source_target
+                    ON lecturer_documents(source_type, storage_target, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_student_subjects_student_subject
                     ON student_subjects(student_id, advisor_id, subject_code);
 
@@ -465,9 +496,12 @@ def init_postgres_tables() -> None:
                     email VARCHAR(255),
                     phone VARCHAR(80),
                     office VARCHAR(255),
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE,
                     data_origin VARCHAR(80) NOT NULL DEFAULT 'manual',
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
+                ALTER TABLE advisor_profiles
+                    ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
 
                 CREATE TABLE IF NOT EXISTS student_profiles (
                     student_id VARCHAR(20) PRIMARY KEY,
@@ -490,16 +524,64 @@ def init_postgres_tables() -> None:
                     risk_level VARCHAR(40),
                     scholarship_status VARCHAR(120),
                     campus VARCHAR(120),
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE,
                     data_origin VARCHAR(80) NOT NULL DEFAULT 'manual',
+                    last_master_import_id UUID,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
+                ALTER TABLE student_profiles
+                    ADD COLUMN IF NOT EXISTS last_master_import_id UUID;
+                ALTER TABLE student_profiles
+                    ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
                 CREATE INDEX IF NOT EXISTS idx_student_profiles_program
                     ON student_profiles(program_code, gpa);
                 CREATE INDEX IF NOT EXISTS idx_student_profiles_risk
                     ON student_profiles(risk_level, academic_status);
                 CREATE INDEX IF NOT EXISTS idx_student_profiles_attendance
                     ON student_profiles(attendance_rate);
+
+                -- V30 administrator master-data imports are deliberately staged.
+                -- A file is parsed and validated first; confirmation is a separate
+                -- authenticated request.  Snapshots make a committed batch
+                -- recoverable across both PostgreSQL and MongoDB.
+                CREATE TABLE IF NOT EXISTS master_import_batches (
+                    import_id UUID PRIMARY KEY,
+                    import_type VARCHAR(40) NOT NULL DEFAULT 'student_master',
+                    filename VARCHAR(255) NOT NULL,
+                    actor_admin_id VARCHAR(80) NOT NULL,
+                    status VARCHAR(30) NOT NULL DEFAULT 'staged',
+                    source_columns JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    column_mapping JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    validation_summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    row_count INTEGER NOT NULL DEFAULT 0,
+                    inserted_count INTEGER NOT NULL DEFAULT 0,
+                    updated_count INTEGER NOT NULL DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    confirmed_at TIMESTAMP,
+                    rolled_back_at TIMESTAMP,
+                    failure_detail TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_master_import_batches_created
+                    ON master_import_batches(created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS master_import_rows (
+                    import_id UUID NOT NULL REFERENCES master_import_batches(import_id) ON DELETE CASCADE,
+                    row_number INTEGER NOT NULL,
+                    canonical_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    issues JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    PRIMARY KEY(import_id, row_number)
+                );
+
+                CREATE TABLE IF NOT EXISTS master_import_snapshots (
+                    import_id UUID NOT NULL REFERENCES master_import_batches(import_id) ON DELETE CASCADE,
+                    student_id VARCHAR(20) NOT NULL,
+                    postgres_existed BOOLEAN NOT NULL DEFAULT FALSE,
+                    postgres_record JSONB,
+                    mongo_existed BOOLEAN NOT NULL DEFAULT FALSE,
+                    mongo_record JSONB,
+                    PRIMARY KEY(import_id, student_id)
+                );
 
                 CREATE TABLE IF NOT EXISTS advisor_course_assignments (
                     advisor_id VARCHAR(20) NOT NULL,
@@ -639,7 +721,7 @@ def _user_identifier(user_role: str, student_id: Optional[str], advisor_id: Opti
     role = (user_role or "student").lower()
     if role == "student":
         return student_id or "unknown_student"
-    if role == "advisor":
+    if role in {"advisor", "lecturer"}:
         return advisor_id or "unknown_advisor"
     if role == "admin":
         return "ADMIN"
@@ -1056,10 +1138,13 @@ def list_student_subjects(student_id: str) -> List[Dict[str, Any]]:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT student_id, advisor_id, subject_code, subject_name
-                FROM student_subjects
+                SELECT DISTINCT ON (student_id, advisor_id, course_code)
+                       student_id, advisor_id, course_code AS subject_code,
+                       course_name AS subject_name, term_code, grade,
+                       score, attendance_rate, enrollment_status
+                FROM student_course_enrollments
                 WHERE student_id = %s
-                ORDER BY subject_name
+                ORDER BY student_id, advisor_id, course_code, term_code DESC
                 """,
                 (student_id,),
             )
@@ -1146,27 +1231,183 @@ def list_advisor_documents_for_advisor(advisor_id: str, limit: int = 20) -> List
         conn.close()
 
 
+def lecturer_teaches_subject(teaching_scope_id: str, subject_code: str) -> Optional[Dict[str, Any]]:
+    """Resolve a Lecturer course from current enrollment/course-assignment data."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT e.course_code AS subject_code, MAX(e.course_name) AS subject_name
+                FROM student_course_enrollments e
+                WHERE e.advisor_id = %s AND e.course_code = %s
+                GROUP BY e.course_code
+                LIMIT 1
+                """,
+                (teaching_scope_id, subject_code),
+            )
+            row = cur.fetchone()
+            if row:
+                return dict(row)
+            cur.execute(
+                """
+                SELECT subject_code, subject_name
+                FROM advisor_subjects
+                WHERE advisor_id = %s AND subject_code = %s
+                LIMIT 1
+                """,
+                (teaching_scope_id, subject_code),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def save_lecturer_document(
+    lecturer_id: str,
+    teaching_scope_id: str,
+    subject_code: str,
+    subject_name: str,
+    filename: str,
+    uploaded_by: str,
+    summary: str,
+    conclusion_table: Dict[str, Any],
+    text_preview: str,
+    full_text: str,
+    extraction_method: str = "unknown",
+    detected_language: str = "mixed",
+    source_type: str = "pdf",
+    storage_target: str = "postgres",
+    cloned_agent_name: Optional[str] = None,
+    structured_data: Optional[Dict[str, Any]] = None,
+    mongo_object_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO lecturer_documents
+                    (lecturer_id, teaching_scope_id, subject_code, subject_name, filename, uploaded_by,
+                     summary, conclusion_table, text_preview, full_text, extraction_method,
+                     detected_language, source_type, storage_target, cloned_agent_name,
+                     structured_data, mongo_object_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, lecturer_id, teaching_scope_id, subject_code, subject_name, filename,
+                          uploaded_by, summary, conclusion_table, extraction_method, detected_language,
+                          source_type, storage_target, cloned_agent_name, structured_data,
+                          mongo_object_id, created_at
+                """,
+                (
+                    lecturer_id, teaching_scope_id, subject_code, subject_name, filename, uploaded_by,
+                    summary, Json(conclusion_table), text_preview, full_text, extraction_method,
+                    detected_language, source_type, storage_target, cloned_agent_name,
+                    Json(structured_data or {}), mongo_object_id,
+                ),
+            )
+            row = cur.fetchone()
+            conn.commit()
+            return _tag_document_scope(row, "lecturer")
+    finally:
+        conn.close()
+
+
+def list_lecturer_documents_for_lecturer(lecturer_id: str, teaching_scope_id: str, limit: int = 20) -> List[Dict[str, Any]]:
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT {LECTURER_DOCUMENT_COLUMNS_PUBLIC}
+                FROM lecturer_documents
+                WHERE lecturer_id = %s AND teaching_scope_id = %s
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (lecturer_id, teaching_scope_id, limit),
+            )
+            return [_tag_document_scope(row, "lecturer") for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def get_lecturer_document_for_lecturer(document_id: int, lecturer_id: str, teaching_scope_id: str) -> Optional[Dict[str, Any]]:
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT {LECTURER_DOCUMENT_COLUMNS_PUBLIC}, text_preview, full_text
+                FROM lecturer_documents
+                WHERE id = %s AND lecturer_id = %s AND teaching_scope_id = %s
+                """,
+                (document_id, lecturer_id, teaching_scope_id),
+            )
+            row = cur.fetchone()
+            return _tag_document_scope(row, "lecturer") if row else None
+    finally:
+        conn.close()
+
+
+def delete_lecturer_document_for_lecturer(document_id: int, lecturer_id: str, teaching_scope_id: str) -> bool:
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM lecturer_documents
+                WHERE id = %s AND lecturer_id = %s AND teaching_scope_id = %s
+                RETURNING id
+                """,
+                (document_id, lecturer_id, teaching_scope_id),
+            )
+            row = cur.fetchone()
+            if row:
+                cur.execute("DELETE FROM ai_data_agents WHERE document_scope = 'lecturer' AND document_id = %s", (document_id,))
+            conn.commit()
+            return bool(row)
+    finally:
+        conn.close()
+
+
 def list_student_accessible_documents(student_id: str, limit: int = 20) -> List[Dict[str, Any]]:
     conn = get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT d.id, d.advisor_id, d.subject_code, d.subject_name, d.filename, d.uploaded_by,
-                       d.summary, d.conclusion_table, d.extraction_method, d.detected_language,
-                       d.source_type, d.storage_target, d.cloned_agent_name, d.structured_data,
-                       d.mongo_object_id, d.created_at
+                SELECT d.id, d.advisor_id, NULL::VARCHAR AS lecturer_id,
+                       d.advisor_id AS teaching_scope_id, d.subject_code, d.subject_name,
+                       d.filename, d.uploaded_by, d.summary, d.conclusion_table,
+                       d.extraction_method, d.detected_language, d.source_type, d.storage_target,
+                       d.cloned_agent_name, d.structured_data, d.mongo_object_id, d.created_at,
+                       'advisor'::VARCHAR AS document_scope
                 FROM advisor_documents d
-                JOIN student_subjects ss
-                  ON ss.student_id = %s
-                 AND ss.advisor_id = d.advisor_id
-                 AND ss.subject_code = d.subject_code
-                ORDER BY d.created_at DESC
+                WHERE EXISTS (
+                    SELECT 1 FROM student_course_enrollments e
+                    WHERE e.student_id = %s AND e.advisor_id = d.advisor_id
+                      AND e.course_code = d.subject_code
+                )
+                UNION ALL
+                SELECT d.id, NULL::VARCHAR AS advisor_id, d.lecturer_id,
+                       d.teaching_scope_id, d.subject_code, d.subject_name,
+                       d.filename, d.uploaded_by, d.summary, d.conclusion_table,
+                       d.extraction_method, d.detected_language, d.source_type, d.storage_target,
+                       d.cloned_agent_name, d.structured_data, d.mongo_object_id, d.created_at,
+                       'lecturer'::VARCHAR AS document_scope
+                FROM lecturer_documents d
+                WHERE EXISTS (
+                    SELECT 1 FROM student_course_enrollments e
+                    WHERE e.student_id = %s AND e.advisor_id = d.teaching_scope_id
+                      AND e.course_code = d.subject_code
+                )
+                ORDER BY created_at DESC
                 LIMIT %s
                 """,
-                (student_id, limit),
+                (student_id, student_id, limit),
             )
-            return [_iso_row(row) for row in cur.fetchall()]
+            return [_tag_document_scope(row, str(row.get("document_scope") or "advisor")) for row in cur.fetchall()]
     finally:
         conn.close()
 
@@ -1189,10 +1430,30 @@ def get_advisor_document_for_advisor(document_id: int, advisor_id: str) -> Optio
         conn.close()
 
 
-def get_student_accessible_document(document_id: int, student_id: str) -> Optional[Dict[str, Any]]:
+def get_student_accessible_document(document_id: int, student_id: str, document_scope: str = "advisor") -> Optional[Dict[str, Any]]:
+    scope = (document_scope or "advisor").lower().strip()
     conn = get_connection()
     try:
         with conn.cursor() as cur:
+            if scope in {"lecturer", "lecturer_documents", "course"}:
+                cur.execute(
+                    """
+                    SELECT d.id, NULL::VARCHAR AS advisor_id, d.lecturer_id, d.teaching_scope_id,
+                           d.subject_code, d.subject_name, d.filename, d.uploaded_by, d.summary,
+                           d.conclusion_table, d.text_preview, d.full_text, d.extraction_method,
+                           d.detected_language, d.source_type, d.storage_target, d.cloned_agent_name,
+                           d.structured_data, d.mongo_object_id, d.created_at
+                    FROM lecturer_documents d
+                    WHERE d.id = %s AND EXISTS (
+                        SELECT 1 FROM student_course_enrollments e
+                        WHERE e.student_id = %s AND e.advisor_id = d.teaching_scope_id
+                          AND e.course_code = d.subject_code
+                    )
+                    """,
+                    (document_id, student_id),
+                )
+                row = cur.fetchone()
+                return _tag_document_scope(row, "lecturer") if row else None
             cur.execute(
                 """
                 SELECT d.id, d.advisor_id, d.subject_code, d.subject_name, d.filename, d.uploaded_by,
@@ -1200,16 +1461,18 @@ def get_student_accessible_document(document_id: int, student_id: str) -> Option
                        d.extraction_method, d.detected_language, d.source_type, d.storage_target,
                        d.cloned_agent_name, d.structured_data, d.mongo_object_id, d.created_at
                 FROM advisor_documents d
-                JOIN student_subjects ss
-                  ON ss.student_id = %s
-                 AND ss.advisor_id = d.advisor_id
-                 AND ss.subject_code = d.subject_code
                 WHERE d.id = %s
+                  AND EXISTS (
+                    SELECT 1 FROM student_course_enrollments e
+                    WHERE e.student_id = %s
+                      AND e.advisor_id = d.advisor_id
+                      AND e.course_code = d.subject_code
+                  )
                 """,
-                (student_id, document_id),
+                (document_id, student_id),
             )
             row = cur.fetchone()
-            return _iso_row(row) if row else None
+            return _tag_document_scope(row, "advisor") if row else None
     finally:
         conn.close()
 
@@ -1239,7 +1502,7 @@ def delete_advisor_document_for_advisor(document_id: int, advisor_id: str) -> bo
 def _tag_document_scope(row: Dict[str, Any], scope: str) -> Dict[str, Any]:
     row = _iso_row(row)
     row["document_scope"] = scope
-    # Stable UI key because admin_documents and advisor_documents may have the same numeric id.
+    # Stable UI key because each document store has its own numeric sequence.
     row["global_id"] = f"{scope}:{row.get('id')}"
     if scope == "admin":
         row.setdefault("subject_name", "Admin/global")
@@ -1247,7 +1510,7 @@ def _tag_document_scope(row: Dict[str, Any], scope: str) -> Dict[str, Any]:
 
 
 def list_all_documents_for_admin(limit: int = 100) -> List[Dict[str, Any]]:
-    """Admin can inspect both global PDF/Excel files and advisor subject PDF/Excel files in one panel."""
+    """Admin can audit global, Advisor-owned, and Lecturer-owned knowledge."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -1276,7 +1539,18 @@ def list_all_documents_for_admin(limit: int = 100) -> List[Dict[str, Any]]:
             )
             advisor_rows = [_tag_document_scope(row, "advisor") for row in cur.fetchall()]
 
-            combined = admin_rows + advisor_rows
+            cur.execute(
+                f"""
+                SELECT {LECTURER_DOCUMENT_COLUMNS_PUBLIC}
+                FROM lecturer_documents
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            lecturer_rows = [_tag_document_scope(row, "lecturer") for row in cur.fetchall()]
+
+            combined = admin_rows + advisor_rows + lecturer_rows
             combined.sort(key=lambda r: r.get("created_at") or "", reverse=True)
             return combined[:limit]
     finally:
@@ -1306,6 +1580,21 @@ def get_any_document_for_admin(document_scope: str, document_id: int) -> Optiona
                 return _tag_document_scope(row, "advisor") if row else None
         finally:
             conn.close()
+    if scope in {"lecturer", "lecturer_documents", "course"}:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT {LECTURER_DOCUMENT_COLUMNS_PUBLIC}, text_preview, full_text
+                    FROM lecturer_documents WHERE id = %s
+                    """,
+                    (document_id,),
+                )
+                row = cur.fetchone()
+                return _tag_document_scope(row, "lecturer") if row else None
+        finally:
+            conn.close()
     return None
 
 
@@ -1326,6 +1615,18 @@ def delete_any_document_for_admin(document_scope: str, document_id: int) -> bool
                     (document_id,),
                 )
                 row = cur.fetchone()
+                conn.commit()
+                return bool(row)
+        finally:
+            conn.close()
+    if scope in {"lecturer", "lecturer_documents", "course"}:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM lecturer_documents WHERE id = %s RETURNING id", (document_id,))
+                row = cur.fetchone()
+                if row:
+                    cur.execute("DELETE FROM ai_data_agents WHERE document_scope = 'lecturer' AND document_id = %s", (document_id,))
                 conn.commit()
                 return bool(row)
         finally:
@@ -1968,7 +2269,7 @@ def create_or_update_data_agent_index(
         conn.close()
 
 
-def list_data_agents(user_role: str = "admin", requester_student_id: Optional[str] = None, requester_advisor_id: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+def list_data_agents(user_role: str = "admin", requester_student_id: Optional[str] = None, requester_advisor_id: Optional[str] = None, requester_lecturer_id: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
     role = (user_role or "student").lower()
     conn = get_connection()
     try:
@@ -1983,23 +2284,37 @@ def list_data_agents(user_role: str = "admin", requester_student_id: Optional[st
                     WHERE document_scope = 'advisor' AND owner_id = %s
                     ORDER BY updated_at DESC, id DESC LIMIT %s
                 """, (requester_advisor_id, limit))
+            elif role == "lecturer":
+                cur.execute("""
+                    SELECT * FROM ai_data_agents
+                    WHERE document_scope = 'lecturer' AND owner_id = %s
+                    ORDER BY updated_at DESC, id DESC LIMIT %s
+                """, (requester_lecturer_id, limit))
             else:
                 cur.execute("""
                     SELECT a.*
                     FROM ai_data_agents a
-                    JOIN student_subjects ss
-                      ON ss.student_id = %s
-                     AND ss.advisor_id = a.owner_id
-                     AND ss.subject_code = a.subject_code
-                    WHERE a.document_scope = 'advisor'
+                    WHERE (a.document_scope = 'advisor' AND EXISTS (
+                        SELECT 1 FROM student_course_enrollments e
+                        WHERE e.student_id = %s
+                          AND e.advisor_id = a.owner_id
+                          AND e.course_code = a.subject_code
+                      )) OR (a.document_scope = 'lecturer' AND EXISTS (
+                        SELECT 1
+                        FROM lecturer_documents ld
+                        JOIN student_course_enrollments e
+                          ON e.advisor_id = ld.teaching_scope_id
+                         AND e.course_code = ld.subject_code
+                        WHERE ld.id = a.document_id AND e.student_id = %s
+                      ))
                     ORDER BY a.updated_at DESC, a.id DESC LIMIT %s
-                """, (requester_student_id, limit))
+                """, (requester_student_id, requester_student_id, limit))
             return [_iso_row(r) for r in cur.fetchall()]
     finally:
         conn.close()
 
 
-def search_data_agent_chunks(keyword: str, user_role: str = "admin", requester_student_id: Optional[str] = None, requester_advisor_id: Optional[str] = None, limit: int = 20) -> Dict[str, Any]:
+def search_data_agent_chunks(keyword: str, user_role: str = "admin", requester_student_id: Optional[str] = None, requester_advisor_id: Optional[str] = None, requester_lecturer_id: Optional[str] = None, limit: int = 20) -> Dict[str, Any]:
     q = keyword or ""
     role = (user_role or "student").lower()
     query_vectors: Dict[str, List[float]] = {}
@@ -2019,17 +2334,32 @@ def search_data_agent_chunks(keyword: str, user_role: str = "admin", requester_s
                     WHERE a.document_scope = 'advisor' AND a.owner_id = %s
                     ORDER BY c.id DESC LIMIT 2500
                 """, (requester_advisor_id,))
+            elif role == "lecturer":
+                cur.execute("""
+                    SELECT c.*, a.agent_name, a.filename, a.subject_name, a.subject_code, a.owner_id, a.table_schema, a.capabilities
+                    FROM ai_data_chunks c JOIN ai_data_agents a ON a.agent_key = c.agent_key
+                    WHERE a.document_scope = 'lecturer' AND a.owner_id = %s
+                    ORDER BY c.id DESC LIMIT 2500
+                """, (requester_lecturer_id,))
             else:
                 cur.execute("""
                     SELECT c.*, a.agent_name, a.filename, a.subject_name, a.subject_code, a.owner_id, a.table_schema, a.capabilities
                     FROM ai_data_chunks c JOIN ai_data_agents a ON a.agent_key = c.agent_key
-                    JOIN student_subjects ss
-                      ON ss.student_id = %s
-                     AND ss.advisor_id = a.owner_id
-                     AND ss.subject_code = a.subject_code
-                    WHERE a.document_scope = 'advisor'
+                    WHERE (a.document_scope = 'advisor' AND EXISTS (
+                        SELECT 1 FROM student_course_enrollments e
+                        WHERE e.student_id = %s
+                          AND e.advisor_id = a.owner_id
+                          AND e.course_code = a.subject_code
+                      )) OR (a.document_scope = 'lecturer' AND EXISTS (
+                        SELECT 1
+                        FROM lecturer_documents ld
+                        JOIN student_course_enrollments e
+                          ON e.advisor_id = ld.teaching_scope_id
+                         AND e.course_code = ld.subject_code
+                        WHERE ld.id = a.document_id AND e.student_id = %s
+                      ))
                     ORDER BY c.id DESC LIMIT 2500
-                """, (requester_student_id,))
+                """, (requester_student_id, requester_student_id))
             rows = cur.fetchall()
     finally:
         conn.close()
@@ -2338,7 +2668,7 @@ def list_index_source_states(limit: int = 200) -> List[Dict[str, Any]]:
 
 
 def sync_uploaded_document_agents(*, embedding_provider: Optional[str] = "local") -> Dict[str, Any]:
-    """Ensure legacy/new uploaded admin and advisor documents have local agents.
+    """Ensure uploaded Admin, Advisor, and Lecturer documents have local agents.
 
     Upload endpoints already index files immediately. This sync only backfills old
     files and skips unchanged sources using their content fingerprint.
@@ -2389,6 +2719,27 @@ def sync_uploaded_document_agents(*, embedding_provider: Optional[str] = "local"
                     ))
                 except Exception as exc:
                     errors.append(f"Advisor document {doc.get('id')} indexing failed: {exc}")
+            cur.execute("SELECT * FROM lecturer_documents ORDER BY id ASC")
+            for row in cur.fetchall():
+                doc = _iso_row(row)
+                try:
+                    indexed.append(create_or_update_data_agent_index(
+                        document_scope="lecturer",
+                        document_id=int(doc["id"]),
+                        filename=str(doc.get("filename") or f"lecturer-{doc['id']}"),
+                        source_type=str(doc.get("source_type") or "file"),
+                        storage_target=str(doc.get("storage_target") or "postgres"),
+                        cloned_agent_name=str(doc.get("cloned_agent_name") or "LECTURER_DOCUMENT_AGENT"),
+                        structured_data=doc.get("structured_data") or {},
+                        summary=str(doc.get("summary") or ""),
+                        conclusion_table=doc.get("conclusion_table") or {},
+                        full_text=str(doc.get("full_text") or ""),
+                        owner_role="lecturer", owner_id=str(doc.get("lecturer_id") or ""),
+                        subject_code=doc.get("subject_code"), subject_name=doc.get("subject_name"),
+                        embedding_provider=embedding_provider, skip_unchanged=True,
+                    ))
+                except Exception as exc:
+                    errors.append(f"Lecturer document {doc.get('id')} indexing failed: {exc}")
     finally:
         conn.close()
     changed = sum(1 for item in indexed if not item.get("skipped_unchanged"))

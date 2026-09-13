@@ -36,11 +36,22 @@ COMPARISON_PATTERNS = [
     ("$gt", r"(?:higher(?:\s+than)?|greater(?:\s+than)?|above|over|>)\s*(\d+(?:\.\d+)?)"),
 ]
 
+# Exact values need their own contract. They intentionally run only after the
+# inequality patterns above, so "GPA lower than 3.0" can never be shortened to
+# the incorrect equality filter ``GPA == 3.0``.
+EXACT_VALUE_PATTERNS = [
+    # "GPA is/of/exactly 4.00", "get GPA 4.00", "GPA = 4"
+    r"(?:gpa|grade\s+point(?:\s+average)?)\s*(?:is|of|equals?|equal\s+to|exactly|=|at)?\s*(\d+(?:\.\d+)?)\b",
+    # "students with 4.00 GPA" / "get 4 GPA"
+    r"(?:get|got|have|has|with|whose)?\s*(\d+(?:\.\d+)?)\s*(?:gpa|grade\s+point(?:\s+average)?)\b",
+]
+
 OPERATOR_TEXT = {
     "$lt": "lower than",
     "$lte": "lower than or equal to",
     "$gt": "higher than",
     "$gte": "higher than or equal to",
+    "$eq": "equal to",
 }
 
 
@@ -87,6 +98,19 @@ def parse_student_metric_query(message: str) -> Optional[Dict[str, Any]]:
             matched_phrase = match.group(0)
             break
 
+    if matched_op is None:
+        for pattern in EXACT_VALUE_PATTERNS:
+            match = re.search(pattern, text)
+            if not match:
+                continue
+            try:
+                matched_value = float(match.group(1))
+            except Exception:
+                continue
+            matched_op = "$eq"
+            matched_phrase = match.group(0)
+            break
+
     if matched_op is None or matched_value is None:
         return None
 
@@ -104,7 +128,7 @@ def parse_student_metric_query(message: str) -> Optional[Dict[str, Any]]:
         "value": matched_value,
         "intent": intent,
         "query_filter": {field: {matched_op: matched_value}},
-        "sort": [{"field": field, "direction": "asc" if matched_op in {"$lt", "$lte"} else "desc"}],
+        "sort": [{"field": field, "direction": "asc" if matched_op in {"$lt", "$lte", "$eq"} else "desc"}],
         "answer_style": "aggregate_count" if intent == "count" else "aggregate_filter",
         "matched_phrase": matched_phrase,
         "reason": "Latest message asks for a student GPA numeric comparison, so the database must filter/count by GPA before answering.",
@@ -169,7 +193,7 @@ def _clean_study_term(raw: str) -> str:
     m = _STOP_AFTER_STUDY.search(term)
     if m and m.start() > 0:
         term = term[:m.start()].strip()
-    term = re.sub(r"\s+(?:class|course|subject|program|major)$", "", term, flags=re.I).strip()
+    term = re.sub(r"\s+(?:classes?|courses?|subjects?|programs?|majors?)$", "", term, flags=re.I).strip()
     # Remove common command/filler tokens from both sides repeatedly.
     words = term.split()
     while words and words[0].lower() in _COMMAND_WORDS:
@@ -189,14 +213,14 @@ def _extract_study_term(text: str) -> str:
     """
     raw_text = text or ""
     patterns = [
-        r"\bin\s+([a-zA-Z][a-zA-Z0-9&/\-\s]{1,80}?)\s+(?:program|major|subject|course|class)\b",
-        r"\bof\s+([a-zA-Z][a-zA-Z0-9&/\-\s]{1,80}?)\s+(?:program|major|subject|course|class)\b",
-        r"\bfor\s+([a-zA-Z][a-zA-Z0-9&/\-\s]{1,80}?)\s+(?:program|major|subject|course|class)\b",
-        r"\b([a-zA-Z][a-zA-Z0-9&/\-\s]{1,80}?)\s+(?:program|major|subject|course|class)\b",
-        r"\bprogram\s+(?:in\s+)?([a-zA-Z0-9&/\-\s]{2,80})",
-        r"\bmajor\s+(?:in\s+)?([a-zA-Z0-9&/\-\s]{2,80})",
-        r"\bsubject\s+(?:in\s+)?([a-zA-Z0-9&/\-\s]{2,80})",
-        r"\bcourse\s+(?:in\s+)?([a-zA-Z0-9&/\-\s]{2,80})",
+        r"\bin\s+([a-zA-Z][a-zA-Z0-9&/\-\s]{1,80}?)\s+(?:programs?|majors?|subjects?|courses?|classes?)\b",
+        r"\bof\s+([a-zA-Z][a-zA-Z0-9&/\-\s]{1,80}?)\s+(?:programs?|majors?|subjects?|courses?|classes?)\b",
+        r"\bfor\s+([a-zA-Z][a-zA-Z0-9&/\-\s]{1,80}?)\s+(?:programs?|majors?|subjects?|courses?|classes?)\b",
+        r"\b([a-zA-Z][a-zA-Z0-9&/\-\s]{1,80}?)\s+(?:programs?|majors?|subjects?|courses?|classes?)\b",
+        r"\bprograms?\s+(?:in\s+)?([a-zA-Z0-9&/\-\s]{2,80})",
+        r"\bmajors?\s+(?:in\s+)?([a-zA-Z0-9&/\-\s]{2,80})",
+        r"\bsubjects?\s+(?:in\s+)?([a-zA-Z0-9&/\-\s]{2,80})",
+        r"\bcourses?\s+(?:in\s+)?([a-zA-Z0-9&/\-\s]{2,80})",
         r"(?:student|students|learner|learners)\s+(?:who|that)?\s*(?:study|studies|studying|take|takes|taking|learn|learning|are enrolled in|enrolled in|major in|majors in)\s+([a-zA-Z0-9&/\-\s]{2,80})",
         r"(?:name|names)\s+of\s+(?:the\s+)?(?:student|students)\s+(?:who|that)?\s*(?:study|studies|studying|take|takes|taking|learn|learning|are enrolled in|enrolled in|major in|majors in)\s+([a-zA-Z0-9&/\-\s]{2,80})",
         r"(?:who|which\s+students?)\s+(?:study|studies|studying|take|takes|taking|learn|learning|are enrolled in|enrolled in|major in|majors in)\s+([a-zA-Z0-9&/\-\s]{2,80})",
@@ -388,8 +412,12 @@ def parse_total_student_count_query(message: str) -> Optional[Dict[str, Any]]:
         return None
     if not (_has_any(text, COUNT_TERMS) and _has_any(text, STUDENT_TERMS)):
         return None
-    # Numeric comparisons are a different operation (filter_summary).
-    if any(re.search(pattern, text) for _, pattern in COMPARISON_PATTERNS):
+    # Any numeric GPA/grade condition is a different operation
+    # (filter_summary). Never fall back to the whole-university count merely
+    # because the user expressed equality without saying "equals".
+    if parse_student_metric_query(message):
+        return None
+    if (_has_any(text, GPA_TERMS) or _has_any(text, GRADE_TERMS)) and re.search(r"\b\d+(?:\.\d+)?\b", text):
         return None
     # A concrete programme/subject should not be mistaken for the entire university.
     study_term = _extract_study_term(text)

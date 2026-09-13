@@ -193,10 +193,13 @@ class V30AuthoritativePlannerTests(unittest.TestCase):
 
         self.assertIn("_verified_admin_identity(request)", endpoint)
 
-    def test_frontend_system_and_trace_ui_are_admin_only(self):
+    def test_frontend_health_check_is_invisible_and_trace_is_admin_only(self):
         source = (ROOT / "frontend" / "src" / "App.jsx").read_text()
 
-        self.assertIn("knowledgeTab === 'files' || userRole !== 'admin'", source)
+        self.assertIn("runBackgroundHealthCheck", source)
+        self.assertIn("/admin/system-check/run?user_role=admin", source)
+        self.assertNotIn("Train AI router", source)
+        self.assertNotIn("Run system check", source)
         self.assertIn("userRole === 'admin' && renderDebugTracePanel()", source)
 
 

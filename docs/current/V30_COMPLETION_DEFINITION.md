@@ -20,20 +20,22 @@ The project already contains:
 
 - Dockerized frontend, backend, MCP server, MongoDB, and PostgreSQL services
 - Database-backed Administrator login
-- Student, Advisor, and Administrator permissions
+- Student, Advisor, Lecturer, and Administrator permissions
 - 1,000 synchronized synthetic students
 - Academic, enrollment, grade, attendance, finance, scholarship, and advisor data
 - PDF, Excel, and CSV upload and document-question support
 - PDF report generation and authenticated report downloading
 - A local trainable intent router
 - Table-result rendering
-- An Administrator system check and Advanced maintenance area
+- Automatic read-only runtime and application checks without a manual System panel
 - Automated backend tests and a frontend build gate in GitHub Actions
 
-These features are a foundation, not proof that V30 is release-ready. Each
-required behavior must still pass the release gates below.
+The local release gates for these features passed on 2026-08-17. Public
+deployment still requires the environment-owner controls in Milestone 7.
 
 ## Milestone 1: Harden the current V30 chat path
+
+Status: completed and covered by the academic and random-question live gates.
 
 Do not install or copy code from another version. Refactor the current backend
 in place until it has:
@@ -83,13 +85,15 @@ Expected behavior:
 
 ## Milestone 2: Finish the V30 frontend
 
+Status: completed for the local V30 release. Health checks are automatic and
+technical maintenance controls are absent from the normal role interface.
+
 The normal interface should expose:
 
 ```text
 Chat
 Files
 Results
-Run system check — Administrator only
 ```
 
 Required cleanup:
@@ -98,14 +102,18 @@ Required cleanup:
 - keep one authenticated report-download function;
 - remove duplicate rendering and request helpers;
 - remove obsolete debug controls and unnecessary right-panel actions;
-- keep training, reindexing, repair actions, and traces inside Administrator-only
-  Advanced maintenance;
+- keep training, reindexing, repair actions, and traces out of the normal user
+  interface; expose maintenance only through authenticated operational tooling;
 - do not render system controls or technical traces for Students or Advisors;
+- run the lightweight health check after each Student/Advisor request and the
+  complete read-only application gate after each Administrator request;
 - provide clear loading, empty, success, permission-denied, and error states; and
 - split the current monolithic application component into maintainable,
   role-aware components.
 
 ## Milestone 3: Add real data management
+
+Status: completed in the current V30 code and locally verified on 2026-08-16.
 
 Administrator workflows must support:
 
@@ -125,7 +133,18 @@ Administrator workflows must support:
 Document upload is not the same as importing university master data. These must
 remain separate, clearly labeled workflows.
 
+Implementation note: the normal Administrator interface exposes the safe
+student CSV/Excel pipeline under **Student data**. Authenticated Administrator
+APIs provide student/advisor/administrator add, edit, active-state, and password
+management. Every write passes through the existing request audit middleware.
+Cross-database student imports keep pre-change snapshots and refuse rollback if
+a newer import has changed the same record.
+
 ## Milestone 4: Complete automated AI evaluation
+
+Current V30 status (verified 2026-08-15): benchmark version 2 contains 108
+catalog cases, the local system check includes 5 additional validator cases,
+and the signed random-question live gate contains 28 cases. All currently pass.
 
 Create a fixed, version-controlled benchmark covering:
 
@@ -143,6 +162,11 @@ Critical failures must fail the release gate. Benchmark data must be synthetic
 and deterministic.
 
 ## Milestone 5: Remove legacy code safely
+
+Status: release startup is consolidated, dependency graphs are pinned, and
+confirmed duplicate release/cleanup behavior has been replaced with safe
+compatibility wrappers. Compatibility modules still required by imports or
+regression contracts remain intentionally.
 
 Only after Milestones 1–4 pass:
 
@@ -183,6 +207,10 @@ tests and import/call-site searches prove it is unused.
 Dashboard APIs must enforce the same server-side scopes as chat.
 
 ## Milestone 7: Production readiness
+
+Status: local build, test, live answer, and four-role authorization gates pass.
+Domain, HTTPS, production secrets, external monitoring, PDPA policy approval,
+and an isolated restore drill remain deployment-owner responsibilities.
 
 Before deployment, V30 requires:
 

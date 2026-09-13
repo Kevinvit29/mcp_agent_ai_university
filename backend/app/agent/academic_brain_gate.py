@@ -86,6 +86,10 @@ def _brain_case(
     *,
     requester_student_id: str | None = None,
     requester_advisor_id: str | None = None,
+    expected_tool: str | None = None,
+    expected_query_type: str | None = None,
+    expected_operation: str | None = None,
+    expected_payload_type: str | None = None,
 ) -> Dict[str, Any]:
     plan = deterministic_plan(
         message,
@@ -103,23 +107,43 @@ def _brain_case(
     )
     validation = validate_tool_result(message, plan, result)
     answer = deterministic_database_answer(message, "en", plan, result) or ""
-    expected_type = {
+    plan_arguments = plan.get("arguments") or {}
+    query_type = str(plan_arguments.get("query_type") or "")
+    operation = str(plan_arguments.get("operation") or "")
+    expected_type = expected_payload_type or {
         "student_academic_profile": "student_academic_profile",
         "course_catalog": "course_catalog",
         "academic_risk_summary": "academic_risk_summary",
         "academic_overview": "academic_overview",
-    }.get(str((plan.get("arguments") or {}).get("query_type") or ""), "")
+        "advisor_classroom": "advisor_classroom",
+        "student_subjects": "student_subjects",
+        "academic_analytics": "group_analytics",
+    }.get(query_type, "")
+    if not expected_type:
+        expected_type = {
+            "count": "student_count",
+            "filter_summary": "student_filter_summary",
+            "rank_students": "student_ranking",
+            "group_students": "group_analytics",
+            "study_term_search": "student_study_term_search",
+            "study_term_aggregate": "student_study_term_aggregate",
+            "student_population_aggregate": "student_population_aggregate",
+        }.get(operation, "")
     passed = bool(
         result.get("success") is True
         and validation.get("is_valid") is True
         and answer
         and (not expected_type or _payload_type(result) == expected_type)
+        and (not expected_tool or plan.get("tool_name") == expected_tool)
+        and (expected_query_type is None or query_type == expected_query_type)
+        and (expected_operation is None or operation == expected_operation)
     )
     return {
         "case_id": case_id,
         "passed": passed,
         "tool": plan.get("tool_name"),
         "query_type": (plan.get("arguments") or {}).get("query_type"),
+        "operation": operation,
         "answer_style": (plan.get("arguments") or {}).get("answer_style"),
         "payload_type": _payload_type(result),
         "validated": validation.get("is_valid") is True,
@@ -130,8 +154,40 @@ def _brain_case(
 
 def run_academic_brain_gate() -> Dict[str, Any]:
     cases: List[Dict[str, Any]] = [
+        _brain_case("admin_population_count", "how many students are in the university", "admin"),
+        _brain_case("admin_exact_gpa_count", "how many student get gpa 4.00", "admin"),
+        _brain_case("admin_top_gpa_ranking", "rank the top 5 students by GPA", "admin"),
+        _brain_case(
+            "admin_program_average_gpa",
+            "which program has the highest average GPA",
+            "admin",
+            expected_tool="mongodb_student_tool",
+            expected_operation="group_students",
+            expected_payload_type="group_analytics",
+        ),
+        _brain_case(
+            "admin_course_average_grade",
+            "which course has the highest average grade",
+            "admin",
+            expected_tool="postgres_university_tool",
+            expected_query_type="academic_analytics",
+            expected_operation="group_rank",
+            expected_payload_type="group_analytics",
+        ),
         _brain_case("admin_attendance", "show S001 attendance", "admin"),
         _brain_case("admin_finance", "show S001 tuition balance", "admin"),
+        _brain_case(
+            "student_own_profile",
+            "show my profile",
+            "student",
+            requester_student_id="S001",
+        ),
+        _brain_case(
+            "student_own_grades",
+            "show my grades",
+            "student",
+            requester_student_id="S001",
+        ),
         _brain_case(
             "student_own_finance",
             "show my tuition balance",
@@ -156,14 +212,26 @@ def run_academic_brain_gate() -> Dict[str, Any]:
 
     student_id, advisor_id = _assigned_pair()
     if student_id and advisor_id:
-        cases.append(
+        cases.extend([
             _brain_case(
                 "advisor_assigned_attendance",
                 f"show {student_id} attendance",
                 "advisor",
                 requester_advisor_id=advisor_id,
-            )
-        )
+            ),
+            _brain_case(
+                "advisor_assigned_grade",
+                f"show {student_id} grade",
+                "advisor",
+                requester_advisor_id=advisor_id,
+            ),
+            _brain_case(
+                "advisor_class_attendance_summary",
+                "what is the average attendance of students I teach",
+                "advisor",
+                requester_advisor_id=advisor_id,
+            ),
+        ])
     else:
         cases.append({
             "case_id": "advisor_assigned_attendance",

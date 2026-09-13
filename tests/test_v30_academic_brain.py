@@ -17,7 +17,7 @@ from app.agent.contextual_tool_planner import plan_from_purpose
 from app.agent.final_answer_writer import deterministic_database_answer
 from app.agent.purpose_contract import apply_contract_to_purpose
 from app.agent.result_validator import validate_tool_result
-from app.agent.schema_registry import AUTHORITATIVE_DATA_SOURCES
+from app.agent.schema_registry import AUTHORITATIVE_DATA_SOURCES, SCHEMA_REGISTRY
 from app.agent.tool_planner import deterministic_plan
 
 
@@ -47,6 +47,20 @@ def test_source_of_truth_map_separates_master_and_operational_facts():
     assert academic["tool"] == "postgres_university_tool"
     assert "attendance" in academic["facts"]
     assert "finance" in academic["facts"]
+
+
+def test_mongo_brain_registry_documents_every_current_aggregate_operation():
+    operations = SCHEMA_REGISTRY["mongodb_students"]["operations"]
+    assert {
+        "count",
+        "filter_summary",
+        "rank_students",
+        "group_students",
+        "compare_student_to_population",
+        "study_term_search",
+        "study_term_aggregate",
+        "student_population_aggregate",
+    }.issubset(operations)
 
 
 def test_academic_parser_covers_all_normalized_domains():
@@ -189,6 +203,31 @@ def test_screenshot_ranking_phrases_use_exact_dedicated_contract():
         assert plan["arguments"]["operation"] == "rank_students"
         assert plan["arguments"]["limit"] == top_n
         assert plan["arguments"]["answer_style"] == "student_rank"
+
+
+def test_program_average_gpa_is_grouped_by_program_not_ranked_by_student():
+    message = "which program has the highest average GPA"
+    parsed = parse_database_analytics_query(message)
+    plan = deterministic_plan(message, "en", "admin")
+    result = {
+        "success": True,
+        "data": {
+            "type": "group_analytics",
+            "source": "mongodb_students",
+            "dimension": "program",
+            "measure": "average_gpa",
+            "direction": "desc",
+            "groups": [{"group": "Demo Program", "value": 3.5}],
+        },
+    }
+
+    assert parsed is not None
+    assert parsed["type"] == "database_analytics"
+    assert parsed["dimension"] == "program"
+    assert parsed["measure"] == "average_gpa"
+    assert plan["tool_name"] == "mongodb_student_tool"
+    assert plan["arguments"]["operation"] == "group_students"
+    assert validate_tool_result(message, plan, result)["is_valid"] is True
 
 
 def test_gpa_and_grades_are_returned_together():

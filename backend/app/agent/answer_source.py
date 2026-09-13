@@ -125,7 +125,7 @@ def build_answer_source(plan: Dict[str, Any], tool_result: Dict[str, Any], langu
         query_type = str(args.get("query_type") or "")
         operation = str(args.get("operation") or (data.get("operation") if isinstance(data, dict) else ""))
         docs = _documents(data)
-        if query_type in {"documents", "all_documents", "advisor_documents"} or operation.startswith("document") or operation == "list_documents":
+        if query_type in {"documents", "all_documents", "advisor_documents", "lecturer_documents", "course_documents"} or operation.startswith("document") or operation == "list_documents":
             filename = ""
             if docs:
                 filename = str(docs[0].get("filename") or "")

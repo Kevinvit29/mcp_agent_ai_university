@@ -257,9 +257,15 @@ def _document_plan(message: str, language: str, role: str, requester_student_id:
     if role == "admin":
         qtype = "all_documents"
         prompt = "ADMIN_DOCUMENT_AGENT_PROMPT"
+    elif role == "lecturer":
+        qtype = "lecturer_documents"
+        prompt = "LECTURER_DOCUMENT_AGENT_PROMPT"
+    elif role == "student":
+        qtype = "course_documents"
+        prompt = "STUDENT_ADVISOR_DOCUMENT_PROMPT"
     else:
         qtype = "advisor_documents"
-        prompt = "ADVISOR_DOCUMENT_AGENT_PROMPT" if role == "advisor" else "STUDENT_ADVISOR_DOCUMENT_PROMPT"
+        prompt = "ADVISOR_DOCUMENT_AGENT_PROMPT"
     preferred = None
     if any(w in text for w in ["excel", "xlsx", "xls", "csv", "spreadsheet", "sheet", "เอ็กเซล", "ชีต"]):
         preferred = "excel"
@@ -519,7 +525,7 @@ def _analytics_plan(
         )
 
     if analytics_type == "student_benchmark":
-        if role == "advisor":
+        if role in {"advisor", "lecturer"}:
             plan = _normal_chat_plan(
                 message, language, role, requester_student_id, requester_advisor_id,
                 "Advisor accounts do not have access to student GPA benchmarks.",
@@ -563,11 +569,11 @@ def _analytics_plan(
     if analytics_type == "database_analytics":
         analytics = dict(analytics)
         denied_sections: List[str] = []
-        if role == "advisor" and analytics.get("include_balance"):
+        if role in {"advisor", "lecturer"} and analytics.get("include_balance"):
             analytics["include_balance"] = False
             denied_sections.append("financial_accounts")
         source = str(analytics.get("source") or "postgres")
-        if source == "mongo" and analytics.get("measure") == "average_gpa" and role == "advisor":
+        if source == "mongo" and analytics.get("measure") == "average_gpa" and role in {"advisor", "lecturer"}:
             plan = _normal_chat_plan(
                 message, language, role, requester_student_id, requester_advisor_id,
                 "Advisor accounts do not have access to grouped student GPA.",
@@ -578,7 +584,7 @@ def _analytics_plan(
                 "denied_sections": ["gpa"],
             })
             return plan
-        if analytics.get("measure") == "balance_due" and role == "advisor":
+        if analytics.get("measure") == "balance_due" and role in {"advisor", "lecturer"}:
             plan = _normal_chat_plan(
                 message, language, role, requester_student_id, requester_advisor_id,
                 "Advisor accounts cannot aggregate student financial balances.",
@@ -640,19 +646,22 @@ def _advisor_classroom_plan(
     language: str,
     requester_advisor_id: Optional[str],
     classroom: Dict[str, Any],
+    role: str = "advisor",
 ) -> Dict[str, Any]:
+    role = "lecturer" if (role or "").lower() == "lecturer" else "advisor"
+    role_label = "Lecturer" if role == "lecturer" else "Advisor"
     if classroom.get("type") == "advisor_scope_denial":
         plan = _normal_chat_plan(
             message,
             language,
-            "advisor",
+            role,
             None,
             requester_advisor_id,
-            "Advisor accounts are restricted to facts from their own assigned classes.",
+            f"{role_label} accounts are restricted to facts from their own assigned classes.",
         )
         plan["arguments"].update({
             "reason": "advisor_classroom_scope_only",
-            "answer_style": "advisor_scope",
+            "answer_style": f"{role}_scope",
             "denied_fields": classroom.get("denied_fields") or [],
         })
         plan["purpose_contract"] = build_latest_message_contract(message)
@@ -661,10 +670,10 @@ def _advisor_classroom_plan(
     return _base_plan(
         message=message,
         language=language,
-        role="advisor",
+        role=role,
         requester_student_id=None,
         requester_advisor_id=requester_advisor_id,
-        selected_agent="advisor_classroom_data_agent",
+        selected_agent=f"{role}_classroom_data_agent",
         tool_name="postgres_university_tool",
         arguments={
             "query_type": "advisor_classroom",
@@ -677,8 +686,8 @@ def _advisor_classroom_plan(
             "answer_style": classroom.get("answer_style") or "advisor_class_records",
             "advisor_class_query": classroom,
         },
-        prompt="ADVISOR_GRADE_ANALYST_PROMPT",
-        intent="advisor_classroom_query",
+        prompt="LECTURER_GRADE_ANALYST_PROMPT" if role == "lecturer" else "ADVISOR_GRADE_ANALYST_PROMPT",
+        intent=f"{role}_classroom_query",
         domain="academic_records",
         confidence=1.0,
         reason=str(classroom.get("reason") or "Strict signed-advisor classroom query."),
@@ -692,6 +701,24 @@ def _deterministic_plan_unchecked(message: str, language: str, user_role: str, r
     aids = _advisor_ids(message)
     analytics_query = parse_database_analytics_query(message)
     academic_query = parse_academic_query(message)
+
+    if role == "student" and (
+        re.search(r"\b(?:list|show|find|give\s+me)\s+(?:everyone|everybody|all\s+(?:students?|learners?))\b", text)
+        or any(term in text for term in ("รายชื่อนักศึกษาทั้งหมด", "แสดงนักศึกษาทั้งหมด"))
+    ):
+        plan = _normal_chat_plan(
+            message,
+            language,
+            role,
+            requester_student_id,
+            requester_advisor_id,
+            "Student accounts are limited to their own signed record and enrolled subjects.",
+        )
+        plan["arguments"].update({
+            "reason": "student_own_scope_only",
+            "answer_style": "student_scope",
+        })
+        return plan
 
     # Writing/editing/translation requests may mention the word "student" but do not necessarily
     # ask to read student records.  Keep these in normal chat unless they contain exact IDs, GPA/grade,
@@ -707,7 +734,7 @@ def _deterministic_plan_unchecked(message: str, language: str, user_role: str, r
     if _is_document_query(message):
         return _document_plan(message, language, role, requester_student_id, requester_advisor_id, "The user asked about uploaded PDF/Excel/CSV/document knowledge.")
 
-    if role == "advisor":
+    if role in {"advisor", "lecturer"}:
         advisor_class_query = parse_advisor_class_query(message)
         if advisor_class_query:
             return _advisor_classroom_plan(
@@ -715,6 +742,7 @@ def _deterministic_plan_unchecked(message: str, language: str, user_role: str, r
                 language,
                 requester_advisor_id,
                 advisor_class_query,
+                role,
             )
 
     if role == "student":
@@ -1101,7 +1129,7 @@ Return ONLY JSON:
 Critical rules:
 - If user asks how many/list subjects/courses in the university, use mongodb_student_tool operation=subject_summary. NEVER use student count.
 - If user asks about S001/S002/S035 grades/profile/GPA, use mongodb_student_tool read_students for exactly those IDs. Never reuse a previous student ID when the current message contains a new ID.
-- If user asks about uploaded PDF/Excel/file/document, use postgres_university_tool with query_type all_documents for admin or advisor_documents for advisor/student.
+- If user asks about uploaded PDF/Excel/file/document, use all_documents for admin, advisor_documents for advisor, lecturer_documents for lecturer, or course_documents for student.
 - If user asks normal chat (hello, write text, explain general topic) use tool_name none.
 - Do not invent database fields or private data.
 """.strip()
@@ -1161,7 +1189,7 @@ def _sanitize_ai_plan(raw: Dict[str, Any], message: str, language: str, role: st
         if role == "admin" and args.get("query_type") in {None, "documents"} and domain == "documents":
             args["query_type"] = "all_documents"
         elif role in {"student", "advisor"} and domain == "documents":
-            args["query_type"] = "advisor_documents"
+            args["query_type"] = "lecturer_documents" if role == "lecturer" else ("course_documents" if role == "student" else "advisor_documents")
         args["operation"] = args.get("operation") or ("list_documents" if document_list_request(message) else "search")
         args["keyword"] = args.get("keyword") or friendly_clean_query(message)
 

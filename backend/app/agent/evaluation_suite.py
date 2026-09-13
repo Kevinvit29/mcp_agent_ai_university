@@ -26,6 +26,9 @@ from app.agent.contextual_tool_planner import plan_from_purpose
 from app.agent.result_validator import validate_tool_result
 from app.agent.academic_query import parse_academic_query
 from app.agent.analytics_query import parse_database_analytics_query
+from app.agent.advisor_class_query import parse_advisor_class_query
+from app.agent.agent_orchestrator import plan_turn
+from app.agent.student_own_query import parse_student_own_course_query
 from app.agent.tool_planner import deterministic_plan
 
 
@@ -41,6 +44,8 @@ PARSERS = {
     "student_ranking": parse_student_ranking_query,
     "academic_query": parse_academic_query,
     "database_analytics": parse_database_analytics_query,
+    "advisor_classroom": parse_advisor_class_query,
+    "student_own_course": parse_student_own_course_query,
 }
 
 
@@ -48,7 +53,7 @@ def load_benchmark_catalog() -> Dict[str, Any]:
     """Load the single version-controlled prompt catalog used by local gates."""
     with BENCHMARK_PATH.open("r", encoding="utf-8") as handle:
         catalog = json.load(handle)
-    required_sections = ("parser_cases", "contract_cases", "planner_cases")
+    required_sections = ("parser_cases", "contract_cases", "planner_cases", "conversation_cases")
     if not all(isinstance(catalog.get(name), list) for name in required_sections):
         raise ValueError("V30 benchmark catalog is missing a required case section.")
     case_ids = [
@@ -279,6 +284,34 @@ def _authoritative_planner_cases(catalog_cases: List[Dict[str, Any]]) -> List[Di
     return cases
 
 
+def _conversation_planner_cases(catalog_cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Verify that short follow-ups inherit entities/topics without widening role scope."""
+    cases: List[Dict[str, Any]] = []
+    for case in catalog_cases:
+        message = str(case.get("message") or "")
+        expected = case.get("expected") or {}
+        actual = plan_turn(
+            message=message,
+            language=str(case.get("language") or "en"),
+            user_role=str(case.get("role") or "admin"),
+            requester_student_id=str(case.get("requester_student_id") or "") or None,
+            requester_advisor_id=str(case.get("requester_advisor_id") or "") or None,
+            chat_history=case.get("history") or [],
+            allow_contextual_ai=False,
+        )
+        passed = all(_nested_field(actual, path) == value for path, value in expected.items())
+        cases.append(_result(
+            str(case.get("case_id") or ""),
+            str(case.get("category") or "conversation_followup"),
+            message,
+            passed,
+            expected,
+            actual,
+            str(case.get("note") or ""),
+        ))
+    return cases
+
+
 def run_query_contract_evaluation() -> Dict[str, Any]:
     """Run the safe local regression set and return a UI-friendly report."""
     cases: List[Dict[str, Any]] = []
@@ -315,6 +348,7 @@ def run_query_contract_evaluation() -> Dict[str, Any]:
         ))
 
     cases.extend(_authoritative_planner_cases(catalog["planner_cases"]))
+    cases.extend(_conversation_planner_cases(catalog["conversation_cases"]))
     cases.extend(_validator_cases())
     passed = sum(1 for case in cases if case["passed"])
     failed = len(cases) - passed

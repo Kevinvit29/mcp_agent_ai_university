@@ -6,6 +6,8 @@ from app.admin_accounts import (
     get_admin_account,
     list_admin_accounts,
     set_admin_active,
+    reset_admin_password_by_id,
+    update_admin_account,
 )
 from app.db.postgres import (
     create_or_update_data_agent_index,
@@ -24,6 +26,8 @@ __all__ = [
     "get_admin_account",
     "list_admin_accounts",
     "set_admin_active",
+    "reset_admin_password_by_id",
+    "update_admin_account",
     "create_or_update_data_agent_index",
     "delete_admin_document",
     "delete_any_document_for_admin",

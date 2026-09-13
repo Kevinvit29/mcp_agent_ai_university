@@ -89,6 +89,34 @@ CREATE TABLE IF NOT EXISTS advisor_documents (
 CREATE INDEX IF NOT EXISTS idx_advisor_documents_owner_subject
     ON advisor_documents(advisor_id, subject_code, created_at DESC);
 
+-- Lecturer-owned course material is isolated from advisor-owned knowledge.
+CREATE TABLE IF NOT EXISTS lecturer_documents (
+    id SERIAL PRIMARY KEY,
+    lecturer_id VARCHAR(20) NOT NULL,
+    teaching_scope_id VARCHAR(20) NOT NULL,
+    subject_code VARCHAR(50) NOT NULL,
+    subject_name VARCHAR(255) NOT NULL,
+    filename VARCHAR(255) NOT NULL,
+    uploaded_by VARCHAR(80) DEFAULT 'LECTURER',
+    summary TEXT NOT NULL,
+    conclusion_table JSONB DEFAULT '{}'::jsonb,
+    text_preview TEXT,
+    full_text TEXT,
+    extraction_method VARCHAR(80),
+    detected_language VARCHAR(30),
+    source_type VARCHAR(30) DEFAULT 'pdf',
+    storage_target VARCHAR(30) DEFAULT 'postgres',
+    cloned_agent_name VARCHAR(80),
+    structured_data JSONB DEFAULT '{}'::jsonb,
+    mongo_object_id VARCHAR(80),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_lecturer_documents_owner_subject
+    ON lecturer_documents(lecturer_id, teaching_scope_id, subject_code, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_lecturer_documents_source_target
+    ON lecturer_documents(source_type, storage_target, created_at DESC);
+
 CREATE INDEX IF NOT EXISTS idx_student_subjects_student_subject
     ON student_subjects(student_id, advisor_id, subject_code);
 
@@ -227,9 +255,11 @@ CREATE TABLE IF NOT EXISTS advisor_profiles (
     email VARCHAR(255),
     phone VARCHAR(80),
     office VARCHAR(255),
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
     data_origin VARCHAR(80) NOT NULL DEFAULT 'manual',
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+ALTER TABLE advisor_profiles ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
 CREATE TABLE IF NOT EXISTS student_profiles (
     student_id VARCHAR(20) PRIMARY KEY,
     full_name VARCHAR(255) NOT NULL,
@@ -251,13 +281,57 @@ CREATE TABLE IF NOT EXISTS student_profiles (
     risk_level VARCHAR(40),
     scholarship_status VARCHAR(120),
     campus VARCHAR(120),
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
     data_origin VARCHAR(80) NOT NULL DEFAULT 'manual',
+    last_master_import_id UUID,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS last_master_import_id UUID;
+ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
 CREATE INDEX IF NOT EXISTS idx_student_profiles_program ON student_profiles(program_code, gpa);
 CREATE INDEX IF NOT EXISTS idx_student_profiles_risk ON student_profiles(risk_level, academic_status);
 CREATE INDEX IF NOT EXISTS idx_student_profiles_attendance ON student_profiles(attendance_rate);
+
+-- Admin-only staged student master-data imports. Document knowledge uploads
+-- remain in admin_documents/advisor_documents and never write these tables.
+CREATE TABLE IF NOT EXISTS master_import_batches (
+    import_id UUID PRIMARY KEY,
+    import_type VARCHAR(40) NOT NULL DEFAULT 'student_master',
+    filename VARCHAR(255) NOT NULL,
+    actor_admin_id VARCHAR(80) NOT NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'staged',
+    source_columns JSONB NOT NULL DEFAULT '[]'::jsonb,
+    column_mapping JSONB NOT NULL DEFAULT '{}'::jsonb,
+    validation_summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+    row_count INTEGER NOT NULL DEFAULT 0,
+    inserted_count INTEGER NOT NULL DEFAULT 0,
+    updated_count INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    confirmed_at TIMESTAMP,
+    rolled_back_at TIMESTAMP,
+    failure_detail TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_master_import_batches_created
+    ON master_import_batches(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS master_import_rows (
+    import_id UUID NOT NULL REFERENCES master_import_batches(import_id) ON DELETE CASCADE,
+    row_number INTEGER NOT NULL,
+    canonical_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    issues JSONB NOT NULL DEFAULT '[]'::jsonb,
+    PRIMARY KEY(import_id, row_number)
+);
+
+CREATE TABLE IF NOT EXISTS master_import_snapshots (
+    import_id UUID NOT NULL REFERENCES master_import_batches(import_id) ON DELETE CASCADE,
+    student_id VARCHAR(20) NOT NULL,
+    postgres_existed BOOLEAN NOT NULL DEFAULT FALSE,
+    postgres_record JSONB,
+    mongo_existed BOOLEAN NOT NULL DEFAULT FALSE,
+    mongo_record JSONB,
+    PRIMARY KEY(import_id, student_id)
+);
 CREATE TABLE IF NOT EXISTS advisor_course_assignments (
     advisor_id VARCHAR(20) NOT NULL,
     course_code VARCHAR(40) NOT NULL,

@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Local deterministic quality gate; no containers, models, student records, or tokens needed.
+# Compatibility entry point. The authoritative release workflow lives in
+# scripts/v30_control.py so checks cannot drift between two implementations.
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
-python -m pytest -q tests
-( cd frontend && npm ci && npm run build )
-echo "Local release gate passed. For live deployment, also run the authenticated admin live smoke gate and verify a fresh backup."
+exec python3 scripts/v30_control.py release

@@ -8,6 +8,7 @@ class ChatRequest(BaseModel):
     user_role: str = Field(default="student")
     requester_student_id: Optional[str] = None
     requester_advisor_id: Optional[str] = None
+    requester_lecturer_id: Optional[str] = None
     session_id: Optional[str] = None
     # Optional pinned file context from the Knowledge Workspace. It makes “Ask”
     # answer from the exact uploaded file instead of trying to re-match the filename.
@@ -42,6 +43,7 @@ class AnswerFeedbackRequest(BaseModel):
     user_role: str = Field(default="student")
     requester_student_id: Optional[str] = None
     requester_advisor_id: Optional[str] = None
+    requester_lecturer_id: Optional[str] = None
     question: str = ""
     answer_excerpt: str = ""
     rating: str
@@ -52,4 +54,3 @@ class AnswerFeedbackRequest(BaseModel):
 class LearningReviewRequest(BaseModel):
     user_role: str = Field(default="admin")
     note: Optional[str] = None
-

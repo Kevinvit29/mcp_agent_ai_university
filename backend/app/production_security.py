@@ -21,7 +21,7 @@ from typing import Any, Dict, Iterable, Optional, Tuple
 from urllib.parse import parse_qsl, urlencode
 
 
-VALID_ROLES = {"student", "advisor", "admin"}
+VALID_ROLES = {"student", "advisor", "lecturer", "admin"}
 DEV_DEFAULT_SECRET = "development-only-change-this-secret-before-production-32"
 DEV_DEFAULT_MCP_KEY = "development-only-change-this-mcp-key-before-production"
 
@@ -37,6 +37,7 @@ class RequestIdentity:
     issued_at: int
     expires_at: int
     token_id: str
+    scope_id: Optional[str] = None
 
     @property
     def student_id(self) -> Optional[str]:
@@ -44,13 +45,23 @@ class RequestIdentity:
 
     @property
     def advisor_id(self) -> Optional[str]:
-        return self.subject_id if self.role == "advisor" else None
+        if self.role == "advisor":
+            return self.subject_id
+        # Lecturer accounts have their own Lxxx identity.  The signed scope_id
+        # points at the existing course-assignment owner used by classroom rows.
+        return self.scope_id if self.role == "lecturer" else None
+
+    @property
+    def lecturer_id(self) -> Optional[str]:
+        return self.subject_id if self.role == "lecturer" else None
 
     def public(self) -> Dict[str, Any]:
         return {
             "role": self.role,
             "student_id": self.student_id,
             "advisor_id": self.advisor_id,
+            "lecturer_id": self.lecturer_id,
+            "teaching_scope_id": self.scope_id if self.role == "lecturer" else None,
             "expires_at": self.expires_at,
         }
 
@@ -93,7 +104,7 @@ def _sign(encoded_payload: str) -> str:
     return _b64encode(hmac.new(_secret(), encoded_payload.encode("ascii"), hashlib.sha256).digest())
 
 
-def issue_access_token(role: str, subject_id: str, ttl_seconds: Optional[int] = None, now: Optional[int] = None) -> Tuple[str, RequestIdentity]:
+def issue_access_token(role: str, subject_id: str, ttl_seconds: Optional[int] = None, now: Optional[int] = None, scope_id: Optional[str] = None) -> Tuple[str, RequestIdentity]:
     role = (role or "").strip().lower()
     subject_id = str(subject_id or "").strip()
     if role not in VALID_ROLES or not subject_id:
@@ -108,9 +119,11 @@ def issue_access_token(role: str, subject_id: str, ttl_seconds: Optional[int] = 
         "exp": expires_at,
         "jti": uuid.uuid4().hex,
     }
+    if scope_id:
+        payload["scope"] = str(scope_id).strip()
     encoded = _b64encode(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
     token = f"v1.{encoded}.{_sign(encoded)}"
-    return token, RequestIdentity(role, subject_id, issued_at, expires_at, payload["jti"])
+    return token, RequestIdentity(role, subject_id, issued_at, expires_at, payload["jti"], payload.get("scope"))
 
 
 def verify_access_token(token: str, now: Optional[int] = None) -> RequestIdentity:
@@ -132,6 +145,7 @@ def verify_access_token(token: str, now: Optional[int] = None) -> RequestIdentit
         issued_at = int(payload["iat"])
         expires_at = int(payload["exp"])
         token_id = str(payload["jti"])
+        scope_id = str(payload.get("scope") or "").strip() or None
     except (KeyError, ValueError, TypeError, json.JSONDecodeError) as exc:
         raise SecurityError("Invalid access token payload.") from exc
     if role not in VALID_ROLES or not subject_id or not token_id:
@@ -141,7 +155,9 @@ def verify_access_token(token: str, now: Optional[int] = None) -> RequestIdentit
         raise SecurityError("Access token expired.")
     if issued_at > current + 300:
         raise SecurityError("Access token issue time is invalid.")
-    return RequestIdentity(role, subject_id, issued_at, expires_at, token_id)
+    if role == "lecturer" and not scope_id:
+        raise SecurityError("Lecturer token is missing its teaching scope.")
+    return RequestIdentity(role, subject_id, issued_at, expires_at, token_id, scope_id)
 
 
 def bearer_token_from_headers(headers: Any) -> str:
@@ -159,6 +175,8 @@ def route_required_role(path: str) -> Optional[Iterable[str]]:
         return {"admin"}
     if path.startswith("/advisor/"):
         return {"advisor"}
+    if path.startswith("/lecturer/"):
+        return {"lecturer"}
     if path.startswith("/student/"):
         return {"student"}
     if path.startswith("/ai/training") or path.startswith("/ai/data-agents/reindex") or path.startswith("/ai/data-agents/train"):
@@ -193,13 +211,15 @@ def hash_for_audit(value: str) -> str:
 def rewrite_identity_query(scope: Dict[str, Any], identity: RequestIdentity) -> None:
     """Remove client-controlled identity fields and replace them with verified claims."""
     raw = (scope.get("query_string") or b"").decode("latin-1")
-    protected = {"user_role", "requester_student_id", "requester_advisor_id"}
+    protected = {"user_role", "requester_student_id", "requester_advisor_id", "requester_lecturer_id"}
     pairs = [(key, value) for key, value in parse_qsl(raw, keep_blank_values=True) if key not in protected]
     pairs.append(("user_role", identity.role))
     if identity.student_id:
         pairs.append(("requester_student_id", identity.student_id))
     if identity.advisor_id:
         pairs.append(("requester_advisor_id", identity.advisor_id))
+    if identity.lecturer_id:
+        pairs.append(("requester_lecturer_id", identity.lecturer_id))
     scope["query_string"] = urlencode(pairs, doseq=True).encode("latin-1")
 
 
@@ -210,6 +230,8 @@ def apply_identity_to_model(model: Any, identity: RequestIdentity) -> Any:
         model.requester_student_id = identity.student_id
     if hasattr(model, "requester_advisor_id"):
         model.requester_advisor_id = identity.advisor_id
+    if hasattr(model, "requester_lecturer_id"):
+        model.requester_lecturer_id = identity.lecturer_id
     return model
 
 

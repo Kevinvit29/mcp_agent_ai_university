@@ -62,6 +62,7 @@ def plan_turn(
     requester_advisor_id: Optional[str] = None,
     chat_history: Optional[List[Dict[str, Any]]] = None,
     fallback_router=None,
+    allow_contextual_ai: bool = True,
 ) -> Dict[str, Any]:
     resolved_ids = resolve_followup_student_ids(message, chat_history)
     explicit_ids = {
@@ -112,6 +113,29 @@ def plan_turn(
                 requester_student_id=requester_student_id,
             )
             return _attach_local_context(direct_plan, message, chat_history)
+
+    # Regression/release evaluations must stay deterministic and free even if
+    # an operator has configured Gemini credentials. The resolved planning
+    # message already carries safe follow-up IDs/topics for the local planner.
+    if not allow_contextual_ai:
+        local_plan = deterministic_plan(
+            planning_message,
+            language,
+            user_role,
+            requester_student_id,
+            requester_advisor_id,
+            chat_history,
+        )
+        local_plan.setdefault("arguments", {})["original_question"] = message
+        if inherited_ids:
+            local_plan["arguments"]["resolved_context_student_ids"] = inherited_ids
+        local_plan = _enforce_signed_student_scope(
+            local_plan,
+            message=message,
+            user_role=user_role,
+            requester_student_id=requester_student_id,
+        )
+        return _attach_local_context(local_plan, message, chat_history)
 
     # V3 purpose-first planning: the AI first interprets the full context/purpose
     # of the latest user message. Backend then maps that purpose to safe MCP tools.

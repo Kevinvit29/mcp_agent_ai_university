@@ -52,6 +52,10 @@ def advisor_id_for(index: int) -> str:
     return f"A{index:03d}"
 
 
+def lecturer_id_for(index: int) -> str:
+    return f"L{index:03d}"
+
+
 def _pbkdf2_hash(password: str, salt: str) -> str:
     digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 150_000)
     return f"pbkdf2_sha256$150000${salt}${base64.b64encode(digest).decode('ascii')}"
@@ -97,6 +101,7 @@ def build_demo_dataset(count: int = 1000) -> Dict[str, Any]:
     # flow; this is never used in production.
     student_demo_password_hash = _pbkdf2_hash(DEMO_PASSWORD, "synthetic-v30-student-demo")
     advisor_demo_password_hash = _pbkdf2_hash(DEMO_PASSWORD, "synthetic-v30-advisor-demo")
+    lecturer_demo_password_hash = _pbkdf2_hash(DEMO_PASSWORD, "synthetic-v30-lecturer-demo")
 
     advisors: List[Dict[str, Any]] = []
     for number in range(1, 41):
@@ -113,6 +118,21 @@ def build_demo_dataset(count: int = 1000) -> Dict[str, Any]:
             "teaches": [],
         })
     advisor_by_id = {row["advisor_id"]: row for row in advisors}
+
+    lecturers: List[Dict[str, Any]] = []
+    for number in range(1, 41):
+        lecturers.append({
+            "lecturer_id": lecturer_id_for(number),
+            "advisor_scope_id": advisor_id_for(number),
+            "name": synthetic_name(1400 + number),
+            "department": PROGRAMS[(number - 1) % len(PROGRAMS)]["faculty"],
+            "email": f"lecturer.{number:03d}@demo-university.example",
+            "phone": f"+66-000-LE{number:03d}",
+            "office": f"Teaching Building {1 + (number % 5)}, Room {300 + number}",
+            "data_origin": DATA_ORIGIN,
+            "password_hash": lecturer_demo_password_hash,
+            "is_active": True,
+        })
 
     courses: List[Dict[str, Any]] = []
     for program in PROGRAMS:
@@ -288,6 +308,7 @@ def build_demo_dataset(count: int = 1000) -> Dict[str, Any]:
         "origin": DATA_ORIGIN,
         "students": students,
         "advisors": advisors,
+        "lecturers": lecturers,
         "programs": PROGRAMS,
         "courses": courses,
         "enrollments": enrollments,

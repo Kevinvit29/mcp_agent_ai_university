@@ -133,7 +133,7 @@ def _plan_from_purpose_unchecked(
     wants_table = presentation.get("view") == "table"
     wants_report = bool(presentation.get("want_report"))
 
-    if role == "advisor" and contract_domain != "documents":
+    if role in {"advisor", "lecturer"} and contract_domain != "documents":
         classroom_query = parse_advisor_class_query(message)
         if classroom_query:
             plan = _advisor_classroom_plan(
@@ -141,6 +141,7 @@ def _plan_from_purpose_unchecked(
                 language,
                 requester_advisor_id,
                 classroom_query,
+                role,
             )
             plan["purpose_analysis"] = purpose
             plan["purpose_contract"] = contract
@@ -269,6 +270,19 @@ def _plan_from_purpose_unchecked(
         last_names = _last_names_from_purpose(purpose)
         shape = _student_shape_from_purpose(message, role, purpose)
         text = _low(message)
+        # Raw-text academic contracts are authoritative over an AI-extracted
+        # surname. For example, "median GPA for law majors" means the Law
+        # programme; it must never become a surname lookup for a person named Law.
+        latest_stat_query = parse_student_statistic_query(message)
+        latest_study_query = parse_student_study_query(message)
+        if (
+            isinstance(latest_stat_query, dict)
+            and str(latest_stat_query.get("study_term") or "").strip()
+        ) or (
+            isinstance(latest_study_query, dict)
+            and str(latest_study_query.get("study_term") or "").strip()
+        ):
+            last_names = []
         student_ranking = parse_student_ranking_query(message)
         if student_ranking and role != "admin":
             plan = _normal_chat_plan(

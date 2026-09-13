@@ -131,11 +131,14 @@ def build_database_brain_plan(
     # Explicit documents go to the document knowledge base.
     if _is_document_request(message):
         if role == "student":
-            qtype = "advisor_documents"
+            qtype = "course_documents"
             prompt = "STUDENT_ADVISOR_DOCUMENT_PROMPT"
         elif role == "advisor":
             qtype = "advisor_documents"
             prompt = "ADVISOR_DOCUMENT_AGENT_PROMPT"
+        elif role == "lecturer":
+            qtype = "lecturer_documents"
+            prompt = "LECTURER_DOCUMENT_AGENT_PROMPT"
         else:
             qtype = "all_documents"
             prompt = "ADMIN_DOCUMENT_AGENT_PROMPT"
@@ -245,7 +248,7 @@ def repair_plan_if_result_mismatch(
             repaired["planner_warning"] = f"Database Brain repaired mismatched result type '{current_type or tool}' into subject_summary."
         return repaired
 
-    if domain == "documents" and not (tool == "postgres_university_tool" and args.get("query_type") in {"documents", "advisor_documents", "all_documents"}):
+    if domain == "documents" and not (tool == "postgres_university_tool" and args.get("query_type") in {"documents", "advisor_documents", "lecturer_documents", "course_documents", "all_documents"}):
         repaired = build_database_brain_plan(message, language, user_role, requester_student_id, requester_advisor_id, chat_history)
         if repaired:
             repaired["planner_warning"] = f"Database Brain repaired mismatched result type '{current_type or tool}' into document search."

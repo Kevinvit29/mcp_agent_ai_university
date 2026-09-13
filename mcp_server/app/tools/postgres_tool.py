@@ -290,10 +290,12 @@ def _fetch_advisor_documents_for_role(cur, user_role: str, requester_student_id:
                    d.extraction_method, d.detected_language, d.source_type, d.storage_target,
                    d.cloned_agent_name, d.structured_data, d.mongo_object_id, d.created_at
             FROM advisor_documents d
-            JOIN student_subjects ss
-              ON ss.student_id = %s
-             AND ss.advisor_id = d.advisor_id
-             AND ss.subject_code = d.subject_code
+            WHERE EXISTS (
+                SELECT 1 FROM student_course_enrollments e
+                WHERE e.student_id = %s
+                  AND e.advisor_id = d.advisor_id
+                  AND e.course_code = d.subject_code
+            )
             ORDER BY d.created_at DESC
             LIMIT 80;
             """,
@@ -301,7 +303,7 @@ def _fetch_advisor_documents_for_role(cur, user_role: str, requester_student_id:
         )
         return cur.fetchall(), None
 
-    if user_role == "advisor":
+    if user_role in {"advisor", "lecturer"}:
         if not requester_advisor_id:
             return [], "Advisor document search requires logged-in advisor ID."
         cur.execute(
@@ -336,6 +338,66 @@ def _fetch_advisor_documents_for_role(cur, user_role: str, requester_student_id:
     return [], "Unknown role. Access denied."
 
 
+def _fetch_lecturer_documents_for_role(cur, user_role: str, requester_lecturer_id: str | None, requester_advisor_id: str | None) -> Tuple[List[Dict[str, Any]], str | None]:
+    """Return only files owned by the signed Lecturer and teaching assignment."""
+    if user_role != "lecturer" or not requester_lecturer_id or not requester_advisor_id:
+        return [], "Lecturer document search requires a signed Lecturer identity and teaching scope."
+    cur.execute(
+        """
+        SELECT id, lecturer_id, teaching_scope_id, subject_code, subject_name, filename,
+               uploaded_by, summary, conclusion_table, text_preview, full_text,
+               extraction_method, detected_language, source_type, storage_target,
+               cloned_agent_name, structured_data, mongo_object_id, created_at,
+               'lecturer' AS document_scope
+        FROM lecturer_documents
+        WHERE lecturer_id = %s AND teaching_scope_id = %s
+        ORDER BY created_at DESC
+        LIMIT 80
+        """,
+        (requester_lecturer_id, requester_advisor_id),
+    )
+    return cur.fetchall(), None
+
+
+def _fetch_course_documents_for_student(cur, requester_student_id: str | None) -> Tuple[List[Dict[str, Any]], str | None]:
+    """Combine Advisor and Lecturer materials for the signed student's enrollments."""
+    if not requester_student_id:
+        return [], "Course document search requires a signed student identity."
+    cur.execute(
+        """
+        SELECT d.id, d.advisor_id, NULL::VARCHAR AS lecturer_id,
+               d.advisor_id AS teaching_scope_id, d.subject_code, d.subject_name,
+               d.filename, d.uploaded_by, d.summary, d.conclusion_table, d.text_preview,
+               d.full_text, d.extraction_method, d.detected_language, d.source_type,
+               d.storage_target, d.cloned_agent_name, d.structured_data, d.mongo_object_id,
+               d.created_at, 'advisor'::VARCHAR AS document_scope
+        FROM advisor_documents d
+        WHERE EXISTS (
+            SELECT 1 FROM student_course_enrollments e
+            WHERE e.student_id = %s AND e.advisor_id = d.advisor_id
+              AND e.course_code = d.subject_code
+        )
+        UNION ALL
+        SELECT d.id, NULL::VARCHAR AS advisor_id, d.lecturer_id, d.teaching_scope_id,
+               d.subject_code, d.subject_name, d.filename, d.uploaded_by, d.summary,
+               d.conclusion_table, d.text_preview, d.full_text, d.extraction_method,
+               d.detected_language, d.source_type, d.storage_target, d.cloned_agent_name,
+               d.structured_data, d.mongo_object_id, d.created_at,
+               'lecturer'::VARCHAR AS document_scope
+        FROM lecturer_documents d
+        WHERE EXISTS (
+            SELECT 1 FROM student_course_enrollments e
+            WHERE e.student_id = %s AND e.advisor_id = d.teaching_scope_id
+              AND e.course_code = d.subject_code
+        )
+        ORDER BY created_at DESC
+        LIMIT 160
+        """,
+        (requester_student_id, requester_student_id),
+    )
+    return cur.fetchall(), None
+
+
 def _fetch_all_documents_for_admin(cur) -> List[Dict[str, Any]]:
     """Return both admin/global PDF/Excel files and advisor subject PDF/Excel files for admin."""
     cur.execute(
@@ -365,7 +427,20 @@ def _fetch_all_documents_for_admin(cur) -> List[Dict[str, Any]]:
         """
     )
     advisor_rows = cur.fetchall()
-    rows = list(admin_rows) + list(advisor_rows)
+    cur.execute(
+        """
+        SELECT id, filename, uploaded_by, summary, conclusion_table, text_preview, full_text,
+               extraction_method, detected_language, source_type, storage_target,
+               cloned_agent_name, structured_data, mongo_object_id, created_at,
+               'lecturer' AS document_scope, NULL::VARCHAR AS advisor_id, subject_code,
+               subject_name, lecturer_id, teaching_scope_id
+        FROM lecturer_documents
+        ORDER BY created_at DESC
+        LIMIT 120
+        """
+    )
+    lecturer_rows = cur.fetchall()
+    rows = list(admin_rows) + list(advisor_rows) + list(lecturer_rows)
     rows.sort(key=lambda r: r.get("created_at") or "", reverse=True)
     return rows[:160]
 
@@ -454,7 +529,7 @@ def _fetch_campus_info(cur, keyword: str) -> Dict[str, Any]:
 
 
 
-def _semantic_data_agent_search(cur, keyword: str, user_role: str, requester_student_id: str | None, requester_advisor_id: str | None, preferred_source_type: str = "", limit: int = 12) -> Dict[str, Any]:
+def _semantic_data_agent_search(cur, keyword: str, user_role: str, requester_student_id: str | None, requester_advisor_id: str | None, requester_lecturer_id: str | None = None, preferred_source_type: str = "", limit: int = 12) -> Dict[str, Any]:
     """Search uploaded data-agent chunks by local embeddings.
 
     This complements keyword matching. It lets uploaded Excel rows/PDF chunks be
@@ -487,19 +562,34 @@ def _semantic_data_agent_search(cur, keyword: str, user_role: str, requester_stu
             ORDER BY c.id DESC LIMIT 3500
         """
         cur.execute(sql, tuple([requester_advisor_id] + params))
+    elif user_role == "lecturer":
+        sql = f"""
+            SELECT c.*, a.agent_name, a.filename, a.subject_name, a.subject_code, a.owner_id,
+                   a.storage_target, a.cloned_agent_name, a.table_schema, a.capabilities
+            FROM ai_data_chunks c JOIN ai_data_agents a ON a.agent_key = c.agent_key
+            WHERE a.document_scope = 'lecturer' AND a.owner_id = %s {source_filter_sql}
+            ORDER BY c.id DESC LIMIT 3500
+        """
+        cur.execute(sql, tuple([requester_lecturer_id] + params))
     elif user_role == "student":
         sql = f"""
             SELECT c.*, a.agent_name, a.filename, a.subject_name, a.subject_code, a.owner_id,
                    a.storage_target, a.cloned_agent_name, a.table_schema, a.capabilities
             FROM ai_data_chunks c JOIN ai_data_agents a ON a.agent_key = c.agent_key
-            JOIN student_subjects ss
-              ON ss.student_id = %s
-             AND ss.advisor_id = a.owner_id
-             AND ss.subject_code = a.subject_code
-            WHERE a.document_scope = 'advisor' {source_filter_sql}
+            WHERE ((a.document_scope = 'advisor' AND EXISTS (
+                SELECT 1 FROM student_course_enrollments e
+                WHERE e.student_id = %s
+                  AND e.advisor_id = a.owner_id
+                  AND e.course_code = a.subject_code
+              )) OR (a.document_scope = 'lecturer' AND EXISTS (
+                SELECT 1 FROM lecturer_documents ld
+                JOIN student_course_enrollments e
+                  ON e.advisor_id = ld.teaching_scope_id AND e.course_code = ld.subject_code
+                WHERE ld.id = a.document_id AND e.student_id = %s
+              ))) {source_filter_sql}
             ORDER BY c.id DESC LIMIT 3500
         """
-        cur.execute(sql, tuple([requester_student_id] + params))
+        cur.execute(sql, tuple([requester_student_id, requester_student_id] + params))
     else:
         return {"success": False, "error": "Unknown role for neural data-agent search."}
 
@@ -537,7 +627,7 @@ def _semantic_data_agent_search(cur, keyword: str, user_role: str, requester_stu
     }
 
 
-def _attach_neural_matches(cur, result: Dict[str, Any], keyword: str, user_role: str, requester_student_id: str | None, requester_advisor_id: str | None, preferred_source_type: str = "") -> Dict[str, Any]:
+def _attach_neural_matches(cur, result: Dict[str, Any], keyword: str, user_role: str, requester_student_id: str | None, requester_advisor_id: str | None, preferred_source_type: str = "", requester_lecturer_id: str | None = None) -> Dict[str, Any]:
     try:
         cur.execute("""
             SELECT EXISTS (
@@ -547,7 +637,7 @@ def _attach_neural_matches(cur, result: Dict[str, Any], keyword: str, user_role:
         """)
         if not bool(cur.fetchone().get("exists")):
             return result
-        neural = _semantic_data_agent_search(cur, keyword, user_role, requester_student_id, requester_advisor_id, preferred_source_type, limit=12)
+        neural = _semantic_data_agent_search(cur, keyword, user_role, requester_student_id, requester_advisor_id, requester_lecturer_id, preferred_source_type, limit=12)
         if neural.get("success") and neural.get("matches"):
             result = dict(result)
             result["neural_data_agent"] = neural
@@ -763,13 +853,13 @@ def _advisor_classroom(
     """Return only students/facts linked to the signed advisor and same course."""
     role = (user_role or "").lower()
     advisor_id = str(requester_advisor_id or "").upper().strip()
-    if role != "advisor" or not advisor_id:
-        return {"success": False, "error": "A signed advisor identity is required for classroom queries."}
+    if role not in {"advisor", "lecturer"} or not advisor_id:
+        return {"success": False, "error": "A signed Advisor or Lecturer teaching identity is required for classroom queries."}
 
     cur.execute(
         """
-        SELECT advisor_id, subject_code, subject_name
-        FROM advisor_subjects
+        SELECT DISTINCT advisor_id, course_code AS subject_code, course_name AS subject_name
+        FROM student_course_enrollments
         WHERE advisor_id = %s
         ORDER BY subject_name, subject_code
         """,
@@ -805,18 +895,18 @@ def _advisor_classroom(
         for value in (arguments.get("student_ids") or [])
         if re.fullmatch(r"S\d{3,6}", str(value).upper().strip())
     ]
-    where = ["ss.advisor_id = %s", "ss.subject_code = ANY(%s)"]
+    where = ["e.advisor_id = %s", "e.course_code = ANY(%s)"]
     params: List[Any] = [advisor_id, selected_codes]
     if student_ids:
-        where.append("ss.student_id = ANY(%s)")
+        where.append("e.student_id = ANY(%s)")
         params.append(student_ids)
 
     cur.execute(
         f"""
-        SELECT ss.student_id,
+        SELECT e.student_id,
                p.full_name,
-               ss.subject_code AS course_code,
-               ss.subject_name AS course_name,
+               e.course_code,
+               e.course_name,
                e.term_code,
                e.grade,
                e.score,
@@ -824,28 +914,25 @@ def _advisor_classroom(
                a.classes_attended,
                a.classes_scheduled,
                e.enrollment_status
-        FROM student_subjects ss
-        JOIN student_profiles p ON p.student_id = ss.student_id
-        LEFT JOIN LATERAL (
-            SELECT term_code, grade, score, attendance_rate, enrollment_status
+        FROM (
+            SELECT DISTINCT ON (student_id, advisor_id, course_code)
+                   student_id, advisor_id, course_code, course_name, term_code,
+                   grade, score, attendance_rate, enrollment_status
             FROM student_course_enrollments
-            WHERE student_id = ss.student_id
-              AND advisor_id = ss.advisor_id
-              AND course_code = ss.subject_code
-            ORDER BY term_code DESC
-            LIMIT 1
-        ) e ON TRUE
+            ORDER BY student_id, advisor_id, course_code, term_code DESC
+        ) e
+        JOIN student_profiles p ON p.student_id = e.student_id
         LEFT JOIN LATERAL (
             SELECT attendance_rate, classes_attended, classes_scheduled
             FROM student_attendance_summaries
-            WHERE student_id = ss.student_id
-              AND advisor_id = ss.advisor_id
-              AND course_code = ss.subject_code
+            WHERE student_id = e.student_id
+              AND advisor_id = e.advisor_id
+              AND course_code = e.course_code
             ORDER BY term_code DESC
             LIMIT 1
         ) a ON TRUE
         WHERE {' AND '.join(where)}
-        ORDER BY ss.subject_name, ss.student_id
+        ORDER BY e.course_name, e.student_id
         """,
         tuple(params),
     )
@@ -903,7 +990,8 @@ def _advisor_classroom(
         "requested_metrics": sorted(requested_metrics),
         "student_count": distinct_students,
         "rows": rows,
-        "scope": "signed_advisor_same_course_only",
+        "scope": "signed_lecturer_same_course_only" if role == "lecturer" else "signed_advisor_same_course_only",
+        "requester_role": role,
     }
 
     if operation == "class_list":
@@ -987,12 +1075,12 @@ def _academic_student_profile(
     if not student_id:
         return {"success": False, "error": "A student ID is required."}
 
-    if role == "advisor":
+    if role in {"advisor", "lecturer"}:
         if not requester_advisor_id:
             return {"success": False, "error": "Advisor identity is required."}
         cur.execute(
             """
-            SELECT 1 FROM student_subjects
+            SELECT 1 FROM student_course_enrollments
             WHERE student_id = %s AND advisor_id = %s
             LIMIT 1
             """,
@@ -1062,7 +1150,7 @@ def _academic_student_profile(
             FROM student_course_enrollments WHERE student_id = %s
         """
         params: List[Any] = [student_id]
-        if role == "advisor":
+        if role in {"advisor", "lecturer"}:
             enrollment_sql += " AND advisor_id = %s"
             params.append(requester_advisor_id)
         enrollment_sql += " ORDER BY term_code DESC, course_code"
@@ -1075,7 +1163,7 @@ def _academic_student_profile(
             FROM student_attendance_summaries WHERE student_id = %s
         """
         params = [student_id]
-        if role == "advisor":
+        if role in {"advisor", "lecturer"}:
             attendance_sql += " AND advisor_id = %s"
             params.append(requester_advisor_id)
         attendance_sql += " ORDER BY term_code DESC, course_code"
@@ -1088,7 +1176,7 @@ def _academic_student_profile(
             FROM student_assessment_results WHERE student_id = %s
         """
         params = [student_id]
-        if role == "advisor":
+        if role in {"advisor", "lecturer"}:
             assessment_sql += " AND advisor_id = %s"
             params.append(requester_advisor_id)
         assessment_sql += " ORDER BY term_code DESC, course_code, assessment_type"
@@ -1137,7 +1225,7 @@ def _academic_analytics(
                 return {"success": False, "error": "Student analytics require a signed student identity."}
             where.append("p.student_id = %s")
             params.append(requester_student_id)
-        elif role == "advisor":
+        elif role in {"advisor", "lecturer"}:
             if not requester_advisor_id:
                 return {"success": False, "error": "Advisor analytics require a signed advisor identity."}
             where.append(
@@ -1196,7 +1284,7 @@ def _academic_analytics(
                 return {"success": False, "error": "Student analytics require a signed student identity."}
             where.append("e.student_id = %s")
             params.append(requester_student_id)
-        elif role == "advisor":
+        elif role in {"advisor", "lecturer"}:
             if not requester_advisor_id:
                 return {"success": False, "error": "Advisor analytics require a signed advisor identity."}
             where.append("e.advisor_id = %s")
@@ -1354,7 +1442,7 @@ def _academic_analytics(
             return {"success": False, "error": "Student analytics require a signed student identity."}
         where.append(f"{source_alias}.student_id = %s")
         params.append(requester_student_id)
-    elif role == "advisor":
+    elif role in {"advisor", "lecturer"}:
         if not requester_advisor_id:
             return {"success": False, "error": "Advisor analytics require a signed advisor identity."}
         if source_alias in {"e", "a"}:
@@ -1488,6 +1576,7 @@ def postgres_university_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
     user_role = (arguments.get("_user_role") or "").lower()
     requester_student_id = arguments.get("_requester_student_id")
     requester_advisor_id = arguments.get("_requester_advisor_id")
+    requester_lecturer_id = arguments.get("_requester_lecturer_id")
 
     conn = None
     try:
@@ -1512,7 +1601,7 @@ def postgres_university_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
             if query_type == "data_agents":
                 preferred = (arguments.get("preferred_source_type") or "").lower().strip()
                 limit = int(arguments.get("limit") or 20)
-                return _semantic_data_agent_search(cur, keyword, user_role, requester_student_id, requester_advisor_id, preferred_source_type=preferred, limit=max(1, min(limit, 100)))
+                return _semantic_data_agent_search(cur, keyword, user_role, requester_student_id, requester_advisor_id, requester_lecturer_id, preferred_source_type=preferred, limit=max(1, min(limit, 100)))
 
             if query_type == "campus_info":
                 return _fetch_campus_info(cur, keyword)
@@ -1617,8 +1706,8 @@ def postgres_university_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
                     result = _select_exact_document(rows, arguments)
                 else:
                     result = _select_ranked(rows, keyword, "list_documents" if operation == "list_documents" else "document_search")
-                    result = _attach_neural_matches(cur, result, keyword, user_role, requester_student_id, requester_advisor_id, preferred)
-                result["document_scope"] = "admin_and_advisor_documents"
+                    result = _attach_neural_matches(cur, result, keyword, user_role, requester_student_id, requester_advisor_id, preferred, requester_lecturer_id)
+                result["document_scope"] = "admin_advisor_and_lecturer_documents"
                 result["preferred_source_type"] = preferred or None
                 return result
 
@@ -1633,7 +1722,7 @@ def postgres_university_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
                 if operation == "document_by_id":
                     return _select_exact_document(rows, arguments, default_scope="admin")
                 result = _select_ranked(rows, keyword, operation)
-                return _attach_neural_matches(cur, result, keyword, user_role, requester_student_id, requester_advisor_id, preferred)
+                return _attach_neural_matches(cur, result, keyword, user_role, requester_student_id, requester_advisor_id, preferred, requester_lecturer_id)
 
             if query_type == "advisor_documents":
                 # Advisor-owned PDF knowledge base. Tool-level filtering is strict:
@@ -1650,8 +1739,42 @@ def postgres_university_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
                     result = _select_exact_document(rows, arguments, default_scope="advisor")
                 else:
                     result = _select_ranked(rows, keyword, "list_documents" if operation == "list_documents" else "document_search")
-                    result = _attach_neural_matches(cur, result, keyword, user_role, requester_student_id, requester_advisor_id, preferred)
+                    result = _attach_neural_matches(cur, result, keyword, user_role, requester_student_id, requester_advisor_id, preferred, requester_lecturer_id)
                 result["document_scope"] = "advisor_subject_documents"
+                result["preferred_source_type"] = preferred or None
+                return result
+
+            if query_type == "lecturer_documents":
+                rows, error = _fetch_lecturer_documents_for_role(cur, user_role, requester_lecturer_id, requester_advisor_id)
+                if error:
+                    return {"success": False, "error": error}
+                preferred = (arguments.get("preferred_source_type") or "").lower().strip()
+                if preferred in {"pdf", "excel"}:
+                    rows = [r for r in rows if str(r.get("source_type") or "pdf").lower() == preferred] or rows
+                if operation == "document_by_id":
+                    result = _select_exact_document(rows, arguments, default_scope="lecturer")
+                else:
+                    result = _select_ranked(rows, keyword, "list_documents" if operation == "list_documents" else "document_search")
+                    result = _attach_neural_matches(cur, result, keyword, user_role, requester_student_id, requester_advisor_id, preferred, requester_lecturer_id)
+                result["document_scope"] = "lecturer_course_documents"
+                result["preferred_source_type"] = preferred or None
+                return result
+
+            if query_type == "course_documents":
+                rows, error = _fetch_course_documents_for_student(cur, requester_student_id)
+                if user_role != "student":
+                    return {"success": False, "error": "Course materials are available only to signed students."}
+                if error:
+                    return {"success": False, "error": error}
+                preferred = (arguments.get("preferred_source_type") or "").lower().strip()
+                if preferred in {"pdf", "excel"}:
+                    rows = [r for r in rows if str(r.get("source_type") or "pdf").lower() == preferred] or rows
+                if operation == "document_by_id":
+                    result = _select_exact_document(rows, arguments)
+                else:
+                    result = _select_ranked(rows, keyword, "list_documents" if operation == "list_documents" else "document_search")
+                    result = _attach_neural_matches(cur, result, keyword, user_role, requester_student_id, requester_advisor_id, preferred, requester_lecturer_id)
+                result["document_scope"] = "enrolled_course_documents"
                 result["preferred_source_type"] = preferred or None
                 return result
 
@@ -1661,18 +1784,16 @@ def postgres_university_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
                 cur.execute(
                     """
                     SELECT ss.student_id, ss.advisor_id, ss.subject_code, ss.subject_name,
-                           latest.term_code, latest.grade, latest.enrollment_status
-                    FROM student_subjects ss
-                    LEFT JOIN LATERAL (
-                        SELECT term_code, grade, enrollment_status
+                           ss.term_code, ss.grade, ss.enrollment_status
+                    FROM (
+                        SELECT DISTINCT ON (student_id, advisor_id, course_code)
+                               student_id, advisor_id, course_code AS subject_code,
+                               course_name AS subject_name, term_code, grade,
+                               enrollment_status
                         FROM student_course_enrollments
-                        WHERE student_id = ss.student_id
-                          AND advisor_id = ss.advisor_id
-                          AND course_code = ss.subject_code
-                        ORDER BY term_code DESC
-                        LIMIT 1
-                    ) latest ON TRUE
-                    WHERE ss.student_id = %s
+                        WHERE student_id = %s
+                        ORDER BY student_id, advisor_id, course_code, term_code DESC
+                    ) ss
                     ORDER BY ss.subject_name, ss.subject_code;
                     """,
                     (requester_student_id,),
@@ -1699,13 +1820,13 @@ def postgres_university_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
                         "subjects": selected,
                         "match_count": len(selected),
                         "total_count": len(all_subjects),
-                        "scope": "signed_student_subject_graph",
+                        "scope": "signed_student_current_enrollments",
                     },
-                    "source": "PostgreSQL signed student_subjects authorization graph",
+                    "source": "PostgreSQL signed current-enrollment authorization",
                 }
 
             if query_type == "advisor_subjects":
-                if user_role == "advisor":
+                if user_role in {"advisor", "lecturer"}:
                     cur.execute(
                         """
                         SELECT advisor_id, subject_code, subject_name
@@ -1719,8 +1840,14 @@ def postgres_university_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
                     cur.execute(
                         """
                         SELECT student_id, advisor_id, subject_code, subject_name
-                        FROM student_subjects
-                        WHERE student_id = %s
+                        FROM (
+                            SELECT DISTINCT ON (student_id, advisor_id, course_code)
+                                   student_id, advisor_id, course_code AS subject_code,
+                                   course_name AS subject_name, term_code
+                            FROM student_course_enrollments
+                            WHERE student_id = %s
+                            ORDER BY student_id, advisor_id, course_code, term_code DESC
+                        ) enrolled
                         ORDER BY subject_name;
                         """,
                         (requester_student_id,),

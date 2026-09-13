@@ -57,13 +57,13 @@ def _format_subject_summary(data: Dict[str, Any], thai: bool, arguments: Optiona
             lines.append(f"\nYour record contains {total} student-subject grade record(s).")
             return _line_join(lines)
         if thai:
-            scope = "ทั้งมหาวิทยาลัย" if user_role == "admin" else ("นักศึกษาที่อยู่ในความดูแลของคุณ" if user_role == "advisor" else "ข้อมูลของคุณเอง")
+            scope = "ทั้งมหาวิทยาลัย" if user_role == "admin" else ("นักศึกษาในรายวิชาที่ได้รับมอบหมาย" if user_role in {"advisor", "lecturer"} else "ข้อมูลของคุณเอง")
             lines = [f"อันดับ {len(ranked)} วิชาจาก{scope} โดยเรียงตามจำนวนนักศึกษาที่ลงเรียน:"]
             lines.extend(f"{index}. {row.get('subject')} — {row.get('student_count', 0)} คน" for index, row in enumerate(ranked, start=1))
             lines.append(f"\nอ้างอิงข้อมูลนักศึกษา {students} คน และระเบียนวิชา/เกรด {total} รายการ")
             lines.append("หมายเหตุ: นี่คืออันดับความนิยมจากจำนวนผู้เรียน ไม่ใช่คำแนะนำเฉพาะบุคคลตามความสนใจหรือวิชาบังคับก่อน")
             return _line_join(lines)
-        scope = "university-wide data" if user_role == "admin" else ("your assigned students" if user_role == "advisor" else "your own record")
+        scope = "university-wide data" if user_role == "admin" else ("students in your assigned courses" if user_role in {"advisor", "lecturer"} else "your own record")
         lines = [f"Top {len(ranked)} subjects in {scope}, ranked by distinct enrolled-student count:"]
         lines.extend(f"{index}. {row.get('subject')} — {row.get('student_count', 0)} student(s)" for index, row in enumerate(ranked, start=1))
         lines.append(f"\nBased on {students} student(s) and {total} student-subject grade record(s) in your authorised scope.")
@@ -100,8 +100,9 @@ def _format_grade_list(student: Dict[str, Any], thai: bool) -> List[str]:
         if isinstance(g, dict):
             subj = g.get("subject") or g.get("subject_name") or "Unknown subject"
             grade = g.get("grade") or "-"
-            advisor = g.get("advisor_id")
-            lines.append(f"  - {subj}: {grade}" + (f" ({advisor})" if advisor else ""))
+            score = g.get("score")
+            detail = f"grade {grade}, score {_format_number(score)}" if score is not None else str(grade)
+            lines.append(f"  - {subj}: {detail}")
     return lines
 
 
@@ -206,9 +207,9 @@ def _format_students(data: Any, answer_style: str, thai: bool) -> Optional[str]:
                     if isinstance(item, dict):
                         subject = item.get("subject") or item.get("subject_name") or "Subject"
                         grade = item.get("grade", "N/A")
-                        advisor = item.get("advisor_id")
-                        suffix = f" ({advisor})" if advisor else ""
-                        lines.append(f"    - {subject}: {grade}{suffix}")
+                        score = item.get("score")
+                        detail = f"grade {grade}, score {_format_number(score)}" if score is not None else str(grade)
+                        lines.append(f"    - {subject}: {detail}")
         return _line_join(lines)
 
     if answer_style == "names":
@@ -298,16 +299,18 @@ def _format_group_analytics(data: Dict[str, Any], thai: bool) -> str:
             "ไม่พบกลุ่มข้อมูลที่ตรงกับคำถามภายในขอบเขตสิทธิ์นี้"
             if thai else "No grouped records matched this question within the signed role's data scope."
         )
+    student_self = str(data.get("role_scope") or "") == "student"
     lines = [
         (
-            f"ผลวิเคราะห์ {label} แยกตาม {dimension}:"
-            if thai else f"{label} by {dimension}:"
+            f"ผลวิเคราะห์ของคุณ: {label} แยกตาม {dimension}:"
+            if thai and student_self else
+            (f"Your {label.lower()} by {dimension}:" if student_self else (f"ผลวิเคราะห์ {label} แยกตาม {dimension}:" if thai else f"{label} by {dimension}:"))
         )
     ]
     for index, row in enumerate(groups, start=1):
         value = _format_number(row.get("value"), 3 if measure == "average_gpa" else 2)
         count = row.get("student_count")
-        count_text = f" · {count} student(s)" if count is not None else ""
+        count_text = f" · {count} student(s)" if count is not None and not student_self else ""
         lines.append(f"{index}. {row.get('group') or 'Unknown'} — {label}: {value}{count_text}")
         if measure == "score_change" and row.get("first_term") and row.get("last_term"):
             lines.append(
@@ -334,6 +337,8 @@ def _format_advisor_classroom(data: Dict[str, Any], thai: bool) -> Optional[str]
     course_name = str(course.get("subject_name") or requested_course or "your assigned classes")
     course_code = str(course.get("subject_code") or "")
     course_label = f"{course_name} ({course_code})" if course_code else course_name
+    lecturer = str(data.get("requester_role") or "") == "lecturer"
+    account_label = "lecturer" if lecturer else "advisor"
 
     if status == "course_not_assigned":
         if thai:
@@ -342,15 +347,15 @@ def _format_advisor_classroom(data: Dict[str, Any], thai: bool) -> Optional[str]
                 "ระบบจึงไม่ค้นหาหรือเปิดเผยนักศึกษาจากชั้นเรียนของอาจารย์คนอื่น"
             )
         return (
-            f"“{requested_course or 'That course'}” is not assigned to your advisor account. "
-            "I did not search or reveal students from another advisor’s class."
+            f"“{requested_course or 'That course'}” is not assigned to your {account_label} account. "
+            f"I did not search or reveal students from another {account_label}’s class."
         )
     if status == "student_not_in_advisor_class":
         ids = ", ".join(str(value) for value in (data.get("requested_student_ids") or []))
         if thai:
             return f"ไม่พบ {ids or 'นักศึกษาที่ระบุ'} ในชั้นเรียนที่ผูกกับบัญชีอาจารย์นี้ จึงไม่แสดงข้อมูลจากชั้นเรียนอื่น"
         return (
-            f"I could not find {ids or 'that student'} in any class assigned to your advisor account, "
+            f"I could not find {ids or 'that student'} in any class assigned to your {account_label} account, "
             "so I did not show records from other classes."
         )
 
@@ -364,8 +369,8 @@ def _format_advisor_classroom(data: Dict[str, Any], thai: bool) -> Optional[str]
     if operation == "class_list":
         classes = [row for row in (data.get("classes") or []) if isinstance(row, dict)]
         if not classes:
-            return "ยังไม่มีรายวิชาที่ผูกกับบัญชีอาจารย์นี้" if thai else "No classes are assigned to your advisor account."
-        lines = ["รายวิชาที่ผูกกับบัญชีของคุณ:" if thai else "Classes assigned to your advisor account:"]
+            return "ยังไม่มีรายวิชาที่ผูกกับบัญชีอาจารย์นี้" if thai else f"No classes are assigned to your {account_label} account."
+        lines = ["รายวิชาที่ผูกกับบัญชีของคุณ:" if thai else f"Classes assigned to your {account_label} account:"]
         for row in classes:
             lines.append(
                 f"- {row.get('subject_code') or '-'} — {row.get('subject_name') or 'Unknown'}: "
@@ -1172,7 +1177,6 @@ def _format_academic_records(data: Dict[str, Any], answer_style: str, thai: bool
                 f"- {row.get('term_code') or '-'} / {row.get('course_code') or '-'}: "
                 f"{_format_number(row.get('attendance_rate'))}% "
                 f"({_format_number(row.get('classes_attended'))}/{_format_number(row.get('classes_scheduled'))} classes)"
-                + (f", advisor {row.get('advisor_id')}" if row.get("advisor_id") else "")
             )
         return _line_join(lines)
 
@@ -1547,10 +1551,11 @@ def write_final_answer(user_message: str, language: str, user_role: str, plan: D
                 f"บัญชีอาจารย์ไม่สามารถดู {denied or 'ข้อมูลนักศึกษาส่วนกลาง'} ได้ "
                 "คุณสามารถถามได้เฉพาะรายชื่อนักศึกษาและเกรด คะแนน การเข้าเรียน หรือผลการประเมินจากชั้นเรียนที่ผูกกับบัญชีของคุณ"
             )
+        role_label = "Lecturer" if str(plan.get("user_role") or "") == "lecturer" else "Advisor"
         return (
-            f"Advisor accounts cannot access {denied or 'university-wide student information'}. "
+            f"{role_label} accounts cannot access {denied or 'university-wide student information'}. "
             "You may ask only for enrolled student identity and grade, score, attendance, or assessment facts "
-            "from classes assigned to your advisor account."
+            "from classes assigned to your teaching account."
         )
     if plan.get("tool_name") == "none" and args.get("answer_style") == "capability_limitation":
         limitation = args.get("capability_limitation") if isinstance(args.get("capability_limitation"), dict) else {}
